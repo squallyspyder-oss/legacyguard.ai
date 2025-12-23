@@ -8,6 +8,7 @@ import { runAdvisor } from './advisor';
 import { runOperator } from './operator';
 import { runExecutor } from './executor';
 import { runReviewer, ReviewResult, formatReviewForDisplay } from './reviewer';
+import { buildIncidentTwin, TwinBuilderResult, IncidentAlert } from './twin-builder';
 import { analyzeImpact } from '../lib/impact';
 import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle, markMitigation, recordRegression } from '../lib/metrics';
@@ -19,6 +20,7 @@ type SandboxConfig = {
   enabled?: boolean;
   repoPath?: string;
   command?: string;
+  commands?: Array<{ name: string; command: string; notes?: string }>; // Harness commands from Twin
   runnerPath?: string;
   timeoutMs?: number;
   failMode?: 'fail' | 'warn'; // fail = abort executor; warn = log and continuar
@@ -43,20 +45,22 @@ export type OrchestrationState = {
   plan: Plan;
   results: Map<string, TaskResult>;
   currentWave: number;
-  status: 'planning' | 'executing' | 'awaiting-approval' | 'completed' | 'failed';
+  status: 'planning' | 'twin-building' | 'executing' | 'awaiting-approval' | 'completed' | 'failed';
   logs: string[];
+  twinResult?: TwinBuilderResult;
   createdAt: Date;
   updatedAt: Date;
 };
 
 export type ExecutionPolicy = {
-  allowedAgents?: Array<'advisor' | 'operator' | 'executor' | 'reviewer' | 'advisor-impact'>;
+  allowedAgents?: Array<'advisor' | 'operator' | 'executor' | 'reviewer' | 'advisor-impact' | 'twin-builder'>;
   requireApprovalFor?: Array<'executor' | 'operator'>;
   forbiddenKeywords?: string[];
 };
 
 export type OrchestrationCallbacks = {
   onPlanCreated?: (plan: Plan) => void;
+  onTwinBuilt?: (twin: TwinBuilderResult) => void;
   onTaskStarted?: (task: SubTask) => void;
   onTaskCompleted?: (task: SubTask, result: TaskResult) => void;
   onTaskFailed?: (task: SubTask, error: string) => void;
@@ -113,12 +117,70 @@ export class Orchestrator {
       }).catch(() => undefined);
     }
 
-    // 1. Planejamento
+    // 0. TWIN BUILDER (pré-planner) - se houver incidente
+    let twinResult: TwinBuilderResult | undefined;
+    const incident = context?.incident as IncidentAlert | undefined;
+    const repoPath = context?.repoPath || this.taskContext.repoPath;
+
+    if (incident && repoPath) {
+      this.log('Fase 0: Twin Builder (preparando contexto de incidente)');
+      try {
+        twinResult = await buildIncidentTwin({
+          taskId: this.taskContext.taskId || `twin-${Date.now()}`,
+          incident,
+          repoPath,
+          sandbox: context?.sandbox,
+        });
+
+        this.log(`🔬 Twin preparado: ${twinResult.twinId} (status: ${twinResult.status})`);
+        
+        if (twinResult.legacyProfile) {
+          this.log(`   📊 Profile: ${twinResult.legacyProfile.filesScanned} arquivos, signals: ${Object.entries(twinResult.legacyProfile.signals).filter(([,v]) => v).map(([k]) => k).join(', ') || 'nenhum'}`);
+        }
+        
+        if (twinResult.behavior) {
+          this.log(`   ⚠️ Risco: ${twinResult.behavior.risk}, comportamentos: ${twinResult.behavior.behaviors.join(', ')}`);
+        }
+        
+        if (twinResult.harness?.commands?.length) {
+          this.log(`   🔧 Harness: ${twinResult.harness.commands.length} comandos sugeridos`);
+          // Enriquecer sandbox config com harness commands
+          if (this.taskContext.sandbox) {
+            this.taskContext.sandbox.commands = twinResult.harness.commands;
+          }
+        }
+
+        if (twinResult.impactGuardrails?.warnings?.length) {
+          this.log(`   🛡️ Guardrails: ${twinResult.impactGuardrails.warnings.join('; ')}`);
+        }
+
+        // Salvar no contexto para uso pelos agentes
+        this.taskContext.twinResult = twinResult;
+        this.callbacks.onTwinBuilt?.(twinResult);
+
+        logEvent({
+          action: 'twin.built',
+          severity: 'info',
+          message: `Twin ${twinResult.twinId} preparado`,
+          metadata: { 
+            twinId: twinResult.twinId, 
+            status: twinResult.status,
+            risk: twinResult.behavior?.risk,
+          },
+        }).catch(() => undefined);
+
+      } catch (err: any) {
+        this.log(`⚠️ Twin Builder falhou: ${err?.message || err}. Continuando sem contexto de twin.`);
+      }
+    }
+
+    // 1. Planejamento (agora com contexto de twin se disponível)
     this.log('Fase 1: Planejamento');
     const plan = await runPlanner({
       request,
       context: context?.summary,
       repoInfo: context?.repoInfo,
+      twinContext: twinResult, // Passa contexto do twin para o planner
     });
 
     this.state = {
@@ -128,6 +190,7 @@ export class Orchestrator {
       currentWave: 0,
       status: 'planning',
       logs: [],
+      twinResult,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

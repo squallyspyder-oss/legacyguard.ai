@@ -8,16 +8,28 @@ import fs from 'fs';
 
 const execAsync = promisify(exec);
 
+// Harness commands from Twin Builder
+export type HarnessCommands = {
+  setup?: string[];    // Commands to set up test environment
+  run: string[];       // Commands to reproduce/test the scenario
+  teardown?: string[]; // Cleanup commands
+  env?: Record<string, string>; // Environment variables
+  workdir?: string;    // Working directory override
+};
+
 export type SandboxConfig = {
   enabled?: boolean;
   repoPath: string;
   command?: string;
+  commands?: string[]; // Multiple commands to run in sequence
+  harnessCommands?: HarnessCommands; // Commands from Twin Builder harness
   runnerPath?: string;
   timeoutMs?: number;
   failMode?: 'fail' | 'warn';
   languageHint?: string;
   onLog?: (message: string) => void;
   useDocker?: boolean; // Force Docker mode
+  env?: Record<string, string>; // Additional environment variables
 };
 
 export type SandboxResult = {
@@ -28,6 +40,8 @@ export type SandboxResult = {
   durationMs: number;
   method: 'docker' | 'shell' | 'native';
   error?: string;
+  commandsRun?: string[];
+  reproductionSuccessful?: boolean; // For Twin harness - did we reproduce the issue?
 };
 
 // Language presets for test commands
@@ -63,6 +77,32 @@ async function detectLanguage(repoPath: string): Promise<string | null> {
     }
   }
   return null;
+}
+
+// Build command string from harness commands
+function buildCommandFromHarness(harness: HarnessCommands): string {
+  const commands: string[] = [];
+  
+  // Setup phase
+  if (harness.setup && harness.setup.length > 0) {
+    commands.push(`echo "=== SETUP PHASE ==="`);
+    commands.push(...harness.setup);
+  }
+  
+  // Run phase (required)
+  commands.push(`echo "=== RUN PHASE ==="`);
+  commands.push(...harness.run);
+  
+  // Teardown phase (always run, even on failure)
+  if (harness.teardown && harness.teardown.length > 0) {
+    // Store exit code, run teardown, then exit with stored code
+    commands.push(`HARNESS_EXIT=$?`);
+    commands.push(`echo "=== TEARDOWN PHASE ==="`);
+    commands.push(...harness.teardown);
+    commands.push(`exit $HARNESS_EXIT`);
+  }
+  
+  return commands.join(' && ');
 }
 
 // Find best test command for language
@@ -108,8 +148,24 @@ function isShellRunnerAvailable(runnerPath?: string): boolean {
 async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
   const startTime = Date.now();
   const log = config.onLog || console.log;
+  const commandsRun: string[] = [];
 
-  const command = config.command || (await findTestCommand(config.repoPath, config.languageHint)) || 'echo "No test command found"';
+  // Priority: harnessCommands > commands > command > auto-detect
+  let command: string;
+  if (config.harnessCommands) {
+    command = buildCommandFromHarness(config.harnessCommands);
+    commandsRun.push(...(config.harnessCommands.setup || []));
+    commandsRun.push(...config.harnessCommands.run);
+    commandsRun.push(...(config.harnessCommands.teardown || []));
+    log(`[Sandbox/Docker] Using harness commands from Twin Builder`);
+  } else if (config.commands && config.commands.length > 0) {
+    command = config.commands.join(' && ');
+    commandsRun.push(...config.commands);
+  } else {
+    command = config.command || (await findTestCommand(config.repoPath, config.languageHint)) || 'echo "No test command found"';
+    commandsRun.push(command);
+  }
+
   const timeoutSec = Math.ceil((config.timeoutMs || 300000) / 1000);
 
   // Determine base image based on language
@@ -130,6 +186,16 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
   log(`[Sandbox/Docker] Command: ${command}`);
   log(`[Sandbox/Docker] Timeout: ${timeoutSec}s`);
 
+  // Build environment variable args
+  const envArgs: string[] = [];
+  const allEnv = { ...config.env, ...config.harnessCommands?.env };
+  for (const [key, value] of Object.entries(allEnv)) {
+    envArgs.push('-e', `${key}=${value}`);
+  }
+
+  // Determine working directory
+  const workdir = config.harnessCommands?.workdir || '/workspace';
+
   return new Promise((resolve) => {
     const args = [
       'run',
@@ -140,7 +206,8 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
       '--read-only',
       '--tmpfs=/tmp:rw,noexec,nosuid,size=100m',
       `-v=${config.repoPath}:/workspace:ro`,
-      '-w=/workspace',
+      `-w=${workdir}`,
+      ...envArgs,
       image,
       '/bin/sh',
       '-c',
@@ -176,6 +243,9 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
     proc.on('close', (code) => {
       clearTimeout(timeout);
       const durationMs = Date.now() - startTime;
+      
+      // For harness: exitCode !== 0 means we successfully reproduced the issue
+      const reproductionSuccessful = config.harnessCommands ? code !== 0 : undefined;
 
       resolve({
         success: code === 0,
@@ -185,6 +255,8 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
         durationMs,
         method: 'docker',
         error: killed ? 'Timeout exceeded' : undefined,
+        commandsRun,
+        reproductionSuccessful,
       });
     });
 
@@ -399,5 +471,104 @@ export async function getSandboxCapabilities(): Promise<{
     docker,
     shell,
     recommended: docker ? 'docker' : shell ? 'shell' : 'native',
+  };
+}
+
+// Run sandbox with Twin Builder harness
+export async function runSandboxWithTwinHarness(
+  repoPath: string,
+  harness: {
+    commands: string[];
+    testFixture?: string;
+    env?: Record<string, string>;
+  },
+  options?: {
+    timeoutMs?: number;
+    onLog?: (message: string) => void;
+    useDocker?: boolean;
+  }
+): Promise<SandboxResult> {
+  const log = options?.onLog || console.log;
+  
+  log(`[Sandbox/Twin] Running harness with ${harness.commands.length} commands`);
+  
+  // Convert Twin harness format to HarnessCommands format
+  const harnessCommands: HarnessCommands = {
+    setup: [],
+    run: harness.commands,
+    teardown: [],
+    env: harness.env,
+  };
+
+  // If there's a test fixture, add setup command to create it
+  if (harness.testFixture) {
+    harnessCommands.setup = [
+      `echo "Setting up test fixture..."`,
+      `mkdir -p /tmp/fixtures`,
+    ];
+  }
+
+  const result = await runSandbox({
+    enabled: true,
+    repoPath,
+    harnessCommands,
+    timeoutMs: options?.timeoutMs || 120000, // 2 min default for harness
+    failMode: 'fail', // We want to know if reproduction failed
+    onLog: log,
+    useDocker: options?.useDocker,
+  });
+
+  // Interpret result for Twin context
+  // For incident reproduction: exitCode !== 0 means we reproduced the issue (good!)
+  // For fix verification: exitCode === 0 means fix works (good!)
+  
+  return {
+    ...result,
+    reproductionSuccessful: result.exitCode !== 0,
+  };
+}
+
+// Validate harness commands for safety
+export function validateHarnessCommands(commands: string[]): {
+  valid: boolean;
+  warnings: string[];
+  blocked: string[];
+} {
+  const warnings: string[] = [];
+  const blocked: string[] = [];
+  
+  const dangerousPatterns = [
+    /rm\s+-rf\s+\/(?!tmp)/i,  // rm -rf outside /tmp
+    /curl\s+.*\|\s*(?:bash|sh)/i,  // curl | bash
+    /wget\s+.*\|\s*(?:bash|sh)/i,  // wget | bash
+    />\s*\/etc\//i,  // writing to /etc
+    /chmod\s+777/i,  // world-writable
+    /mkfs/i,  // filesystem commands
+    /dd\s+if=/i,  // dd commands
+  ];
+
+  const warningPatterns = [
+    /sudo/i,  // sudo usage
+    /su\s+-/i,  // su usage
+    /npm\s+install\s+--unsafe/i,  // unsafe npm
+  ];
+
+  for (const cmd of commands) {
+    for (const pattern of dangerousPatterns) {
+      if (pattern.test(cmd)) {
+        blocked.push(`Blocked dangerous command: ${cmd.slice(0, 50)}...`);
+      }
+    }
+    for (const pattern of warningPatterns) {
+      if (pattern.test(cmd)) {
+        warnings.push(`Warning in command: ${cmd.slice(0, 50)}...`);
+      }
+    }
+  }
+
+  return {
+    valid: blocked.length === 0,
+    warnings,
+    blocked,
   };
 }

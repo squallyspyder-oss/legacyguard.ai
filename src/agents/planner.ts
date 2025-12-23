@@ -3,12 +3,17 @@ import OpenAI from 'openai';
 
 export type SubTask = {
   id: string;
-  type: 'analyze' | 'refactor' | 'test' | 'security' | 'review' | 'deploy';
+  type: 'analyze' | 'refactor' | 'test' | 'security' | 'review' | 'deploy' | 'reproduce';
   description: string;
-  agent: 'advisor' | 'operator' | 'executor' | 'reviewer' | 'advisor-impact';
+  agent: 'advisor' | 'operator' | 'executor' | 'reviewer' | 'advisor-impact' | 'twin-builder';
   dependencies: string[]; // IDs das subtarefas que precisam completar antes
   priority: 'high' | 'medium' | 'low';
   estimatedComplexity: number; // 1-10
+  incidentContext?: {
+    errorType?: string;
+    stackTrace?: string;
+    affectedFiles?: string[];
+  };
 };
 
 export type Plan = {
@@ -26,13 +31,15 @@ const PLANNER_SYSTEM_PROMPT = `Você é o Planner Agent do LegacyGuard, especial
 Sua função é analisar o pedido do usuário e criar um plano de execução estruturado.
 
 REGRAS:
-1. Sempre comece com análise (advisor) antes de modificações
-2. Segurança é prioridade - inclua scan de vulnerabilidades
-3. Testes devem ser gerados ANTES de refatorações arriscadas
-4. Review é obrigatório para mudanças de alto risco
-5. Deploy/merge só após aprovação humana para operações críticas
+1. Para incidentes/erros, SEMPRE comece com twin-builder para reproduzir o problema
+2. Sempre inclua análise (advisor) antes de modificações
+3. Segurança é prioridade - inclua scan de vulnerabilidades quando aplicável
+4. Testes devem ser gerados ANTES de refatorações arriscadas
+5. Review é obrigatório para mudanças de alto risco
+6. Deploy/merge só após aprovação humana para operações críticas
 
 AGENTES DISPONÍVEIS:
+- twin-builder: Cria "digital twin" do incidente - reproduz cenário controlado para entender o problema (USE PRIMEIRO para incidentes)
 - advisor: Analisa código, sugere melhorias, identifica problemas
 - advisor-impact: Analisa impacto/refatores em graph/index
 - operator: Cria branches, aplica patches, gera PRs
@@ -40,6 +47,7 @@ AGENTES DISPONÍVEIS:
 - executor: Merge PRs, deploy (requer aprovação)
 
 TIPOS DE SUBTAREFA:
+- reproduce: Reprodução controlada de incidente/bug (twin-builder)
 - analyze: Análise de código/contexto
 - refactor: Refatoração/correção
 - test: Geração/execução de testes
@@ -47,16 +55,37 @@ TIPOS DE SUBTAREFA:
 - review: Revisão de código
 - deploy: Merge/deploy
 
+FLUXO RECOMENDADO PARA INCIDENTES:
+1. reproduce (twin-builder) - entender e reproduzir o problema
+2. analyze (advisor) - analisar causa raiz com contexto do twin
+3. refactor (operator) - aplicar correção
+4. test (operator) - validar fix em sandbox
+5. review (reviewer) - revisar qualidade
+6. deploy (executor) - merge após aprovação
+
 Responda APENAS com JSON válido no formato:
 {
   "summary": "Resumo do plano",
   "subtasks": [
     {
       "id": "1",
-      "type": "analyze",
-      "description": "Descrição clara da tarefa",
-      "agent": "advisor",
+      "type": "reproduce",
+      "description": "Criar digital twin do incidente para reproduzir em ambiente controlado",
+      "agent": "twin-builder",
       "dependencies": [],
+      "priority": "high",
+      "estimatedComplexity": 4,
+      "incidentContext": {
+        "errorType": "Tipo do erro se aplicável",
+        "affectedFiles": ["arquivos relacionados"]
+      }
+    },
+    {
+      "id": "2",
+      "type": "analyze",
+      "description": "Analisar causa raiz com contexto do twin",
+      "agent": "advisor",
+      "dependencies": ["1"],
       "priority": "high",
       "estimatedComplexity": 3
     }
@@ -73,31 +102,71 @@ export async function runPlanner(task: {
 }): Promise<Plan> {
   // Modo mock para testes/offline: evita dependência de API externa
   if (process.env.LEGACYGUARD_PLANNER_MODE === 'mock' || (!process.env.OPENAI_API_KEY && process.env.NODE_ENV === 'test')) {
+    const hasIncidentContext = task.request.toLowerCase().includes('incident') || 
+                                task.request.toLowerCase().includes('error') ||
+                                task.request.toLowerCase().includes('bug') ||
+                                task.request.toLowerCase().includes('issue') ||
+                                task.context?.toLowerCase().includes('stacktrace');
+    
+    const subtasks: SubTask[] = hasIncidentContext ? [
+      {
+        id: '1',
+        type: 'reproduce',
+        description: 'Criar digital twin do incidente para reproduzir em ambiente controlado',
+        agent: 'twin-builder',
+        dependencies: [],
+        priority: 'high',
+        estimatedComplexity: 4,
+        incidentContext: {
+          errorType: 'unknown',
+          affectedFiles: [],
+        },
+      },
+      {
+        id: '2',
+        type: 'analyze',
+        description: 'Analisar causa raiz com contexto do twin',
+        agent: 'advisor',
+        dependencies: ['1'],
+        priority: 'high',
+        estimatedComplexity: 3,
+      },
+      {
+        id: '3',
+        type: 'review',
+        description: 'Revisar alterações antes de executar',
+        agent: 'reviewer',
+        dependencies: ['2'],
+        priority: 'medium',
+        estimatedComplexity: 3,
+      },
+    ] : [
+      {
+        id: '1',
+        type: 'analyze',
+        description: 'Analisar contexto e riscos',
+        agent: 'advisor',
+        dependencies: [],
+        priority: 'high',
+        estimatedComplexity: 3,
+      },
+      {
+        id: '2',
+        type: 'review',
+        description: 'Revisar alterações antes de executar',
+        agent: 'reviewer',
+        dependencies: ['1'],
+        priority: 'medium',
+        estimatedComplexity: 3,
+      },
+    ];
+
     const fakePlan: Plan = {
       id: `plan-${Date.now()}`,
       originalRequest: task.request,
-      summary: 'Plano mock para testes',
-      subtasks: [
-        {
-          id: '1',
-          type: 'analyze',
-          description: 'Analisar contexto e riscos',
-          agent: 'advisor',
-          dependencies: [],
-          priority: 'high',
-          estimatedComplexity: 3,
-        },
-        {
-          id: '2',
-          type: 'review',
-          description: 'Revisar alterações antes de executar',
-          agent: 'reviewer',
-          dependencies: ['1'],
-          priority: 'medium',
-          estimatedComplexity: 3,
-        },
-      ],
-      estimatedTime: '15 minutos',
+      summary: hasIncidentContext ? 'Plano com reprodução de incidente via twin-builder' : 'Plano mock para testes',
+      subtasks,
+      estimatedTime: hasIncidentContext ? '25 minutos' : '15 minutos',
       riskLevel: 'medium',
       requiresApproval: false,
     };
