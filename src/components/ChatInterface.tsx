@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import AgentSelector, { AGENT_ROLES } from './AgentSelector';
@@ -21,7 +22,8 @@ interface Message {
   tests?: TestFile[];
   approvalRequired?: string; // orchestrationId quando precisa aprovação
   suggestOrchestrateText?: string; // quando chat sugere escalar para orquestração
-   twinOffer?: { prompt: string };
+  twinOffer?: { prompt: string };
+  twinReady?: boolean;
 }
 
 interface Patch {
@@ -309,14 +311,16 @@ export default function ChatInterface() {
       stepsCompleted: prev.stepsCompleted + 1,
     }));
 
-      const resultsStub = getAssistResultsStub(action);
+    const resultsStub = getAssistResultsStub(action);
 
-      setMessages((prev) => [
-        ...prev,
+    setMessages((prev) => {
+      const newMsgs: Message[] = [
         { role: 'assistant', content: labels[action] },
         { role: 'assistant', content: getAssistStub(action) },
-        ...(resultsStub ? [{ role: 'assistant', content: resultsStub }] : []),
-      ]);
+      ];
+      if (resultsStub) newMsgs.push({ role: 'assistant', content: resultsStub });
+      return [...prev, ...newMsgs];
+    });
   };
 
   const buildExecutionPolicy = () => {
@@ -533,7 +537,7 @@ export default function ChatInterface() {
       a.click();
       window.URL.revokeObjectURL(url);
       setMessages(prev => [...prev, { role: 'assistant', content: `✅ Download ZIP iniciado (${tests.length} arquivos)` }]);
-    } catch (e) {
+    } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: `❌ Falha ao gerar ZIP de testes` }]);
     }
   };
@@ -581,7 +585,6 @@ export default function ChatInterface() {
               setMessages(prev => [...prev, {
                 role: 'assistant',
                 content: `🧪 **Twin pronto**\nSnapshot: ${res.snapshotPath || 'n/d'}\nFixture: ${res.syntheticFixturePath || 'n/d'}\nTests: ${res.syntheticTests?.length || 0}\nComandos: ${Object.values(res.commands || {}).join(', ') || 'n/d'}\nGuardrails: ${(res.impactGuardrails?.warnings || []).join('; ') || 'nenhum'}`,
-                // @ts-ignore custom CTA for rollback placeholder
                 twinReady: true,
               }]);
               twinStream.close();
@@ -616,7 +619,7 @@ export default function ChatInterface() {
     }
   };
 
-  const handleOrchestrate = async (request: string, context?: any) => {
+  const handleOrchestrate = async (request: string, context?: Record<string, unknown>) => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/agents', {
@@ -686,7 +689,6 @@ export default function ChatInterface() {
             setMessages(prev => [...prev, {
               role: 'assistant',
               content: `⏸️ **Aprovação necessária**\n\nA tarefa "${update.task.description}" requer aprovação humana antes de continuar.\n\nClique no botão abaixo para aprovar.`,
-              // @ts-ignore - custom field for approval UI
               approvalRequired: update.orchestrationId,
             }]);
           } else if (update.type === 'orchestration-complete') {
@@ -861,7 +863,7 @@ export default function ChatInterface() {
               {status !== 'loading' && session?.user && (
                 <div className="flex items-center gap-3">
                   {session.user.image && (
-                    <img src={session.user.image} alt="Avatar" className="w-10 h-10 rounded-full border border-white/10" />
+                    <Image src={session.user.image} alt="Avatar" width={40} height={40} className="rounded-full border border-white/10" />
                   )}
                   <div className="text-right">
                     <p className="text-sm font-semibold">{session.user.name || session.user.email}</p>
@@ -957,7 +959,7 @@ export default function ChatInterface() {
                       )}
 
                       {/* Placeholder para rollback/guardrails UI */}
-                      {(msg as any).twinReady && (
+                      {msg.twinReady && (
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
                             onClick={() => setMessages(prev => [...prev, { role: 'assistant', content: 'Rollback preparado (placeholder).' }])}
