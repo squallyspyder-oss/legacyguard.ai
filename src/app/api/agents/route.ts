@@ -4,6 +4,7 @@ import { logEvent } from '../../../lib/audit';
 import { emitSandboxLog } from '../../../lib/sandbox-logs';
 import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '../../../lib/rate-limit';
 import { agentsRequestSchema, validateRequest, validationErrorResponse } from '../../../lib/schemas';
+import { requirePermission, Permission } from '../../../lib/rbac';
 
 export async function POST(req: Request) {
   // Rate limiting (strict for expensive LLM operations)
@@ -23,6 +24,14 @@ export async function POST(req: Request) {
   // Suporta: { role, payload } ou { role: 'orchestrate', request, context }
   if (!body?.role) {
     return NextResponse.json({ error: 'Campo "role" obrigatório' }, { status: 400 });
+  }
+
+  // RBAC: exige permissão conforme tipo de operação
+  const requiredPermission: Permission =
+    body.role === 'orchestrate' ? 'orchestrate' : body.role === 'approve' ? 'approve' : 'execute';
+  const auth = await requirePermission(requiredPermission);
+  if (!auth.authorized) {
+    return auth.response;
   }
 
   const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

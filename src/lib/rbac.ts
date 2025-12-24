@@ -67,7 +67,16 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
 };
 
 // Get role from session (extend NextAuth types as needed)
-export function getUserRole(session: { user?: { role?: string } } | null): Role {
+export function getUserRole(
+  session: {
+    user?: {
+      role?: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+    };
+  } | null
+): Role {
   if (!session?.user) return 'guest';
   const role = session.user.role as Role | undefined;
   if (role && role in ROLE_PERMISSIONS) return role;

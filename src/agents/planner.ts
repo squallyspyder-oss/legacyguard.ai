@@ -14,6 +14,7 @@ export type SubTask = {
     stackTrace?: string;
     affectedFiles?: string[];
   };
+  sandboxPhase?: 'pre' | 'post';
 };
 
 export type Plan = {
@@ -58,10 +59,12 @@ TIPOS DE SUBTAREFA:
 FLUXO RECOMENDADO PARA INCIDENTES:
 1. reproduce (twin-builder) - entender e reproduzir o problema
 2. analyze (advisor) - analisar causa raiz com contexto do twin
-3. refactor (operator) - aplicar correção
-4. test (operator) - validar fix em sandbox
-5. review (reviewer) - revisar qualidade
-6. deploy (executor) - merge após aprovação
+ 3. sandbox-pre (advisor/operator) - rodar harness Twin em sandbox para reproduzir/validar falha
+ 4. refactor (operator) - aplicar correção
+ 5. test (operator) - validar fix em sandbox
+ 6. sandbox-post (operator) - rodar harness Twin novamente; se passar, incidente mitigado
+ 7. review (reviewer) - revisar qualidade
+ 8. deploy (executor) - merge após aprovação
 
 Responda APENAS com JSON válido no formato:
 {
@@ -82,12 +85,32 @@ Responda APENAS com JSON válido no formato:
     },
     {
       "id": "2",
-      "type": "analyze",
-      "description": "Analisar causa raiz com contexto do twin",
+      "type": "test",
+      "description": "Rodar harness Twin em sandbox (fase pré-patch) para reproduzir falha",
       "agent": "advisor",
       "dependencies": ["1"],
       "priority": "high",
+      "estimatedComplexity": 3,
+      "sandboxPhase": "pre"
+    },
+    {
+      "id": "3",
+      "type": "analyze",
+      "description": "Analisar causa raiz com contexto do twin",
+      "agent": "advisor",
+      "dependencies": ["2"],
+      "priority": "high",
       "estimatedComplexity": 3
+    }
+    {
+      "id": "4",
+      "type": "test",
+      "description": "Rodar harness Twin em sandbox (fase pós-patch) para confirmar que passou",
+      "agent": "operator",
+      "dependencies": ["3"],
+      "priority": "high",
+      "estimatedComplexity": 3,
+      "sandboxPhase": "post"
     }
   ],
   "estimatedTime": "30 minutos",
@@ -217,14 +240,15 @@ Crie um plano de execução detalhado para esta tarefa.
       dependencies: st.dependencies || [],
       priority: st.priority || 'medium',
       estimatedComplexity: st.estimatedComplexity || 5,
+      sandboxPhase: st.sandboxPhase,
     })),
     estimatedTime: parsed.estimatedTime || 'desconhecido',
     riskLevel: parsed.riskLevel || 'medium',
     requiresApproval: parsed.requiresApproval ?? false,
   };
 
-  // Validação: se riskLevel é critical, forçar aprovação
-  if (plan.riskLevel === 'critical') {
+  // Validação: se riskLevel é high/critical, forçar aprovação
+  if (plan.riskLevel === 'critical' || plan.riskLevel === 'high') {
     plan.requiresApproval = true;
   }
 

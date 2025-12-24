@@ -42,8 +42,8 @@ export default function ChatInterface() {
     { 
       role: 'assistant', 
       content: session 
-        ? `👋 Olá, ${session.user?.name || 'usuário'}! Eu sou o LegacyGuard. Posso orquestrar agentes, rodar sandbox seguro, criar gêmeos digitais de incidentes (Twin Builder) e entregar mitigações com prova. Diga o que precisa e eu preparo o plano.` 
-        : '👋 Olá! Eu sou o LegacyGuard. Posso orquestrar agentes, rodar sandbox seguro, criar gêmeos digitais de incidentes (Twin Builder) e entregar mitigações com prova. Faça login com GitHub para acessar repositórios privados ou me conte o que precisa agora mesmo.' 
+        ? `👋 Olá, ${session.user?.name || 'usuário'}! Eu sou o LegacyGuard. Use **LegacyAssist** para um roteiro guiado ("o que faço agora?") com pesquisas (web/RAG/brainstorm) e, quando quiser executar, troque para Orquestrador ou operadores.` 
+        : '👋 Olá! Eu sou o LegacyGuard. Use **LegacyAssist** para um roteiro guiado ("o que faço agora?") com pesquisas (web/RAG/brainstorm) e, quando quiser executar, troque para Orquestrador ou operadores. Faça login com GitHub para repositórios privados.' 
     }
   ]);
   const [input, setInput] = useState('');
@@ -72,6 +72,64 @@ export default function ChatInterface() {
   const [billingCap, setBillingCap] = useState(20);
   const [tokenCap, setTokenCap] = useState(12000);
   const [temperatureCap, setTemperatureCap] = useState(0.5);
+
+  // LegacyAssist (modo guiado)
+  const [assistOnboardingSeen, setAssistOnboardingSeen] = useState(false);
+  const [showAssistModal, setShowAssistModal] = useState(false);
+  const [assistMetrics, setAssistMetrics] = useState({
+    stepsCompleted: 0,
+    researches: 0,
+    executionBlocked: true,
+  });
+
+  const assistStorageKey = useMemo(
+    () => (session?.user?.email ? `legacyAssist:${session.user.email}` : 'legacyAssist:anon'),
+    [session?.user?.email]
+  );
+
+  // Persistência de onboarding/metrics no cliente (por usuário/sessão)
+  useEffect(() => {
+    try {
+      const seen = localStorage.getItem(`${assistStorageKey}:onboardingSeen`);
+      if (seen === 'true') setAssistOnboardingSeen(true);
+      else setAssistOnboardingSeen(false);
+
+      const metricsRaw = localStorage.getItem(`${assistStorageKey}:metrics`);
+      if (metricsRaw) {
+        const parsed = JSON.parse(metricsRaw);
+        if (typeof parsed?.stepsCompleted === 'number' && typeof parsed?.researches === 'number') {
+          setAssistMetrics({
+            stepsCompleted: parsed.stepsCompleted,
+            researches: parsed.researches,
+            executionBlocked: true,
+          });
+        } else {
+          setAssistMetrics({ stepsCompleted: 0, researches: 0, executionBlocked: true });
+        }
+      } else {
+        setAssistMetrics({ stepsCompleted: 0, researches: 0, executionBlocked: true });
+      }
+    } catch {
+      setAssistMetrics({ stepsCompleted: 0, researches: 0, executionBlocked: true });
+    }
+  }, [assistStorageKey]);
+
+  // Se não há sessão (sign-out), garante estado anônimo limpo
+  useEffect(() => {
+    if (!session?.user?.email) {
+      setAssistOnboardingSeen(false);
+      setAssistMetrics({ stepsCompleted: 0, researches: 0, executionBlocked: true });
+    }
+  }, [session?.user?.email]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${assistStorageKey}:onboardingSeen`, assistOnboardingSeen ? 'true' : 'false');
+      localStorage.setItem(`${assistStorageKey}:metrics`, JSON.stringify(assistMetrics));
+    } catch {
+      // ignore
+    }
+  }, [assistOnboardingSeen, assistMetrics, assistStorageKey]);
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -139,6 +197,13 @@ export default function ChatInterface() {
     loadConfig();
   }, []);
 
+  // Exibir modal de onboarding quando entrar no modo LegacyAssist pela primeira vez
+  useEffect(() => {
+    if (agentRole === 'legacyAssist' && !assistOnboardingSeen) {
+      setShowAssistModal(true);
+    }
+  }, [agentRole, assistOnboardingSeen]);
+
   const handleFileUpload = (files: FileList | null) => {
     if (files) {
       const newFiles = Array.from(files).filter(file => file.size < 1000000);
@@ -194,6 +259,66 @@ export default function ChatInterface() {
     return list.slice(0, 3);
   };
 
+  const buildLegacyAssistGuide = (text: string) => {
+    const base = text || 'Descreva o que você precisa.';
+    return [
+      '🎛️ Modo assistido ativo: nenhuma execução automática.',
+      `1) Entender: confirme contexto (repo/riscos/prazo). Pedido: "${base}"`,
+      '2) Pesquisar: escolha RAG interno, Web ou Brainstorm curto.',
+      '3) Se for incidente: acione Twin Builder para reproduzir e gerar harness.',
+      '4) Validar: rode sandbox (fail) ou harness Twin antes de qualquer merge.',
+      '5) Executar (opcional): use Orquestrador para plano+aprovação ou Operator/Executor após validações.',
+      '⚠️ Execução bloqueada neste modo: confirme antes de acionar agentes. Risco atual: baixo (consultivo).',
+    ].join('\n');
+  };
+
+  const getAssistStub = (action: 'rag' | 'web' | 'brainstorm' | 'twin' | 'sandbox' | 'orchestrate'): string => {
+    const common = 'Esta é uma prévia guiada. Nenhuma execução real foi feita.';
+    if (action === 'rag') return `🔍 RAG interno (stub)\n- Procurar no índice: erros, stacktrace, serviços afetados\n- Próximo passo: validar snippet encontrado\n${common}`;
+    if (action === 'web') return `🌐 Busca web (stub)\n- Pesquise fornecedores, CVEs ou artigos relevantes\n- Próximo passo: comparar com contexto local\n${common}`;
+    if (action === 'brainstorm') return `💡 Brainstorm curto (stub)\n- Gerar 3 hipóteses de causa e 3 passos de mitigação\n- Escolha uma para detalhar\n${common}`;
+    if (action === 'twin') return `🧪 Twin Builder (stub)\n- Planeje reproduzir o incidente e gerar harness.commands\n- Próximo passo: rodar sandbox com harness (fail-mode)\n${common}`;
+    if (action === 'sandbox') return `🛡️ Sandbox (stub)\n- Rodar comando seguro em modo fail\n- Se falhar: reproduziu o bug (bom para diagnóstico)\n${common}`;
+    return `🎭 Orquestrador (stub)\n- Criar plano com aprovação\n- Subtarefas: reproduce → analyze → refactor → test → review → deploy\n${common}`;
+  };
+
+  const getAssistResultsStub = (action: 'rag' | 'web' | 'brainstorm' | 'twin' | 'sandbox' | 'orchestrate'): string | null => {
+    const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (action === 'rag') return [`[${ts}] service-auth: stacktrace NullPointer em login (alto)`, `[${ts}] service-billing: timeout ao chamar gateway (médio)`, `[${ts}] recomendação: priorizar auth, coletar traces`].join('\n');
+    if (action === 'web') return [`[${ts}] CVE-2024-xxxx referência similar (alto)`, `[${ts}] Artigo: mitigação com retry + circuit breaker (médio)`, `[${ts}] recomendação: comparar versão/lib local`].join('\n');
+    if (action === 'brainstorm') return [`[${ts}] Hipótese A: regressão em auth`, `[${ts}] Hipótese B: falta de idempotência`, `[${ts}] Próximo: priorizar sandbox fail e logs de auth`].join('\n');
+    if (action === 'twin') return [`[${ts}] Harness pronto (stub): npm test -- run twin-fixture`, `[${ts}] Próximo: rodar sandbox fail-mode com harness`, `[${ts}] Verificar se reproduz stacktrace original`].join('\n');
+    if (action === 'sandbox') return `[${ts}] Execução simulada: exit 1 (reproduziu bug) — bom para diagnóstico`;
+    if (action === 'orchestrate') return [`[${ts}] Plano stub: reproduce → analyze → refactor → test → review → deploy`, `[${ts}] Risco: medium; aprovação requerida para executor`, `[${ts}] Próximo: adicionar checklist de rollback`].join('\n');
+    return null;
+  };
+
+  const handleAssistAction = (action: 'rag' | 'web' | 'brainstorm' | 'twin' | 'sandbox' | 'orchestrate') => {
+    const labels: Record<typeof action, string> = {
+      rag: '🔍 Pesquisar no índice interno (RAG) — sugerido para contexto de código/projeto.',
+      web: '🌐 Pesquisar na web — buscar referências externas.',
+      brainstorm: '💡 Brainstorm rápido — gerar opções e próximos passos.',
+      twin: '🧪 Acionar Twin Builder — reproduzir incidente em ambiente controlado.',
+      sandbox: '🛡️ Rodar sandbox fail-mode — validar comandos antes de merge.',
+      orchestrate: '🎭 Abrir Orquestrador — gerar plano com aprovação antes de executar.',
+    };
+
+    setAssistMetrics((prev) => ({
+      ...prev,
+      researches: ['rag', 'web', 'brainstorm'].includes(action) ? prev.researches + 1 : prev.researches,
+      stepsCompleted: prev.stepsCompleted + 1,
+    }));
+
+      const resultsStub = getAssistResultsStub(action);
+
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: labels[action] },
+        { role: 'assistant', content: getAssistStub(action) },
+        ...(resultsStub ? [{ role: 'assistant', content: resultsStub }] : []),
+      ]);
+  };
+
   const buildExecutionPolicy = () => {
     const allowed = safeMode ? ['advisor', 'reviewer', 'operator', 'advisor-impact'] : undefined;
     const requireApprovalFor = ['executor'];
@@ -216,6 +341,21 @@ export default function ChatInterface() {
     setInput('');
 
     maybeOfferTwinBuilder(userText);
+
+    // Modo LegacyAssist: apenas guia, não executa
+    if (agentRole === 'legacyAssist') {
+      const guide = buildLegacyAssistGuide(userText);
+      setAssistMetrics((prev) => ({ ...prev, stepsCompleted: prev.stepsCompleted + 1 }));
+      setMessages(prev => [...prev, { role: 'assistant', content: guide }]);
+      // Sugerir CTA explícito para orquestrar ou validar em sandbox, sem executar.
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: 'Sugestão: abra o Orquestrador para plano com aprovação, ou rode Sandbox (fail) primeiro. Nenhuma ação será executada sem sua confirmação.',
+      }]);
+      setInlineSuggestions(computeSuggestions(userText));
+      setUploadedFiles([]);
+      return;
+    }
 
     // Se modo orquestração, usar fluxo multi-agente
     if (agentRole === 'orchestrate') {
@@ -331,6 +471,10 @@ export default function ChatInterface() {
   };
 
   const applyPatch = async (patch: Patch) => {
+    if (agentRole === 'legacyAssist') {
+      setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Modo assistido: aplicação automática de patch bloqueada. Use Orquestrador ou mude de modo para executar.' }]);
+      return;
+    }
     if (safeMode) {
       setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Safe mode ativado. Desative em Configurações para aplicar patches.' }]);
       return;
@@ -601,6 +745,10 @@ export default function ChatInterface() {
   };
 
   const handleMerge = async () => {
+    if (agentRole === 'legacyAssist') {
+      setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Modo assistido: merge automático bloqueado. Abra o Orquestrador para plano + aprovação.' }]);
+      return;
+    }
     if (!mergeOwner.trim() || !mergeRepo.trim() || !mergePrNumber.trim()) return;
     if (safeMode) {
       setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Safe mode ativo. Desative em Configurações para permitir merge pelo Executor.' }]);
@@ -747,6 +895,37 @@ export default function ChatInterface() {
                 </div>
                 {isLoading && <span className="px-3 py-1 rounded-full bg-amber-400/15 text-amber-200 text-xs border border-amber-400/40">Processando...</span>}
               </div>
+
+              {agentRole === 'legacyAssist' && (
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-2 justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-100">Modo Assistido ativo</p>
+                      <p className="text-xs text-emerald-200">Nenhuma execução automática. Siga os passos guiados e confirme antes de acionar agentes.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[11px] text-emerald-100">
+                      <span className="px-2 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40">Execução bloqueada</span>
+                      <span className="px-2 py-1 rounded-full bg-white/10 border border-white/20">Passos: {assistMetrics.stepsCompleted}</span>
+                      <span className="px-2 py-1 rounded-full bg-white/10 border border-white/20">Pesquisas: {assistMetrics.researches}</span>
+                    </div>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-2 text-xs text-emerald-50">
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-3">1) Entender → Confirme contexto (repo/riscos/prazo).</div>
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-3">2) Pesquisar → RAG interno, Web, Brainstorm curto.</div>
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-3">3) Incidente → Acione Twin Builder e gere harness.</div>
+                    <div className="rounded-lg border border-white/10 bg-white/5 p-3">4) Validar → Sandbox fail-mode antes de qualquer merge.</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    <button onClick={() => handleAssistAction('rag')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">🔍 RAG interno</button>
+                    <button onClick={() => handleAssistAction('web')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">🌐 Buscar web</button>
+                    <button onClick={() => handleAssistAction('brainstorm')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">💡 Brainstorm</button>
+                    <button onClick={() => handleAssistAction('twin')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">🧪 Twin Builder</button>
+                    <button onClick={() => handleAssistAction('sandbox')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">🛡️ Sandbox fail</button>
+                    <button onClick={() => handleAssistAction('orchestrate')} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">🎭 Orquestrar (plano)</button>
+                    <button onClick={() => setShowAssistModal(true)} className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-white/15">ℹ️ Ajuda do modo</button>
+                  </div>
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto pr-1 space-y-4 rounded-xl border border-white/5 bg-black/10 p-3">
                 {messages.map((msg, i) => (
@@ -1009,7 +1188,7 @@ export default function ChatInterface() {
                     value={mergeOwner}
                     onChange={(e) => setMergeOwner(e.target.value)}
                     placeholder="owner"
-                    className="flex-1 min-w-[120px] px-3 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
+                    className="flex-1 min-w-32 px-3 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
                     disabled={isLoading}
                   />
                   <input
@@ -1017,7 +1196,7 @@ export default function ChatInterface() {
                     value={mergeRepo}
                     onChange={(e) => setMergeRepo(e.target.value)}
                     placeholder="repo"
-                    className="flex-1 min-w-[120px] px-3 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
+                    className="flex-1 min-w-32 px-3 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-500/30"
                     disabled={isLoading}
                   />
                   <input
@@ -1042,6 +1221,31 @@ export default function ChatInterface() {
           </div>
         </div>
       </div>
+
+      {showAssistModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={() => { setShowAssistModal(false); setAssistOnboardingSeen(true); }}>
+          <div className="bg-slate-900 rounded-xl max-w-3xl w-full shadow-2xl border border-emerald-400/40" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-white/10 flex justify-between items-center">
+              <div>
+                <p className="text-xs text-emerald-200 uppercase tracking-wide">LegacyAssist</p>
+                <h2 className="text-2xl font-bold text-emerald-100 mt-1">Modo assistido — sem execução automática</h2>
+              </div>
+              <button onClick={() => { setShowAssistModal(false); setAssistOnboardingSeen(true); }} className="text-3xl text-slate-300 hover:text-white">&times;</button>
+            </div>
+            <div className="p-6 space-y-4 text-slate-100 text-sm">
+              <p>O LegacyAssist guia você em passos, sugere pesquisas (RAG/Web/Brainstorm) e validações (Twin/Sandbox) antes de qualquer ação. Nada será executado sem sua confirmação.</p>
+              <ul className="list-disc list-inside space-y-2 text-slate-200">
+                <li>Fluxo: Entender → Pesquisar → Validar → (Opcional) Orquestrar/Executar.</li>
+                <li>Execução bloqueada por padrão; use CTA para abrir Orquestrador ou agentes.</li>
+                <li>Para incidentes: acione Twin Builder e valide em sandbox fail-mode.</li>
+              </ul>
+            </div>
+            <div className="p-6 border-t border-white/10 flex justify-end gap-3">
+              <button onClick={() => { setShowAssistModal(false); setAssistOnboardingSeen(true); }} className="px-5 py-3 rounded-lg bg-white/10 border border-white/20 text-slate-200">Entendi, começar tour</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedPatch && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={() => setSelectedPatch(null)}>

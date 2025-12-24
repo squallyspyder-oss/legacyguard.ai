@@ -30,6 +30,12 @@ export type SandboxConfig = {
   onLog?: (message: string) => void;
   useDocker?: boolean; // Force Docker mode
   env?: Record<string, string>; // Additional environment variables
+  isolationProfile?: 'strict' | 'permissive'; // Strict = no network + readonly FS by default
+  networkPolicy?: 'none' | 'bridge'; // Overrides isolationProfile
+  fsPolicy?: 'readonly' | 'readwrite'; // Overrides isolationProfile
+  memoryLimit?: string; // Docker memory limit (e.g., "1g")
+  cpuLimit?: string; // Docker CPU limit (e.g., "1" for 1 vCPU)
+  tmpfsSizeMb?: number; // Size for /tmp tmpfs
 };
 
 export type SandboxResult = {
@@ -46,8 +52,8 @@ export type SandboxResult = {
 
 // Language presets for test commands
 const LANGUAGE_PRESETS: Record<string, string[]> = {
-  javascript: ['npm test', 'yarn test', 'pnpm test'],
-  typescript: ['npm test', 'yarn test', 'pnpm test'],
+  javascript: ['pnpm test', 'yarn test', 'npm test'],
+  typescript: ['pnpm test', 'yarn test', 'npm test'],
   python: ['pytest', 'python -m pytest', 'python -m unittest'],
   go: ['go test ./...'],
   rust: ['cargo test'],
@@ -117,12 +123,22 @@ async function findTestCommand(repoPath: string, languageHint?: string): Promise
       if (fs.existsSync(pkgPath)) {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
         if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
+          // Choose package manager by lockfile
+          if (fs.existsSync(path.join(repoPath, 'pnpm-lock.yaml'))) return 'pnpm test';
+          if (fs.existsSync(path.join(repoPath, 'yarn.lock'))) return 'yarn test';
           return 'npm test';
         }
       }
     } catch {
       // Ignore
     }
+  }
+
+  // Prefer lockfile-specific preset
+  if (lang === 'javascript' || lang === 'typescript') {
+    if (fs.existsSync(path.join(repoPath, 'pnpm-lock.yaml'))) return 'pnpm test';
+    if (fs.existsSync(path.join(repoPath, 'yarn.lock'))) return 'yarn test';
+    if (fs.existsSync(path.join(repoPath, 'package-lock.json'))) return 'npm test';
   }
 
   return LANGUAGE_PRESETS[lang]?.[0] || null;
@@ -168,6 +184,14 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
 
   const timeoutSec = Math.ceil((config.timeoutMs || 300000) / 1000);
 
+  // Isolation defaults
+  const profile = config.isolationProfile || 'strict';
+  const networkPolicy = config.networkPolicy || (profile === 'strict' ? 'none' : 'bridge');
+  const fsPolicy = config.fsPolicy || (profile === 'strict' ? 'readonly' : 'readwrite');
+  const memoryLimit = config.memoryLimit || (profile === 'strict' ? '1g' : '2g');
+  const cpuLimit = config.cpuLimit || (profile === 'strict' ? '1' : '2');
+  const tmpfsSize = config.tmpfsSizeMb ?? (profile === 'strict' ? 256 : 512);
+
   // Determine base image based on language
   const lang = config.languageHint || (await detectLanguage(config.repoPath)) || 'javascript';
   const imageMap: Record<string, string> = {
@@ -185,6 +209,7 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
   log(`[Sandbox/Docker] Starting container with image: ${image}`);
   log(`[Sandbox/Docker] Command: ${command}`);
   log(`[Sandbox/Docker] Timeout: ${timeoutSec}s`);
+  log(`[Sandbox/Docker] Policy: network=${networkPolicy}, fs=${fsPolicy}, mem=${memoryLimit}, cpu=${cpuLimit}`);
 
   // Build environment variable args
   const envArgs: string[] = [];
@@ -200,12 +225,15 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
     const args = [
       'run',
       '--rm',
-      '--network=none', // No network access
-      '--memory=512m',
-      '--cpus=1',
-      '--read-only',
-      '--tmpfs=/tmp:rw,noexec,nosuid,size=100m',
-      `-v=${config.repoPath}:/workspace:ro`,
+      `--network=${networkPolicy}`,
+      `--memory=${memoryLimit}`,
+      `--cpus=${cpuLimit}`,
+      '--pids-limit=256',
+      '--security-opt', 'no-new-privileges',
+      '--cap-drop=ALL',
+      ...(fsPolicy === 'readonly' ? ['--read-only'] : []),
+      `--tmpfs=/tmp:rw,nodev,nosuid,size=${tmpfsSize}m`,
+      `-v=${config.repoPath}:/workspace:${fsPolicy === 'readonly' ? 'ro' : 'rw'}`,
       `-w=${workdir}`,
       ...envArgs,
       image,

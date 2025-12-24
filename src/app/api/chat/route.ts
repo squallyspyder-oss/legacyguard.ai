@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runChat } from '@/agents/chat';
 import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '@/lib/rate-limit';
 import { chatRequestSchema, validateRequest, validationErrorResponse } from '@/lib/schemas';
+import { requirePermission } from '@/lib/rbac';
 
 export async function POST(req: NextRequest) {
   // Rate limiting (standard for chat)
   const rateLimitResult = await checkRateLimit(req, { ...RATE_LIMIT_PRESETS.standard, keyPrefix: 'chat' });
   if (!rateLimitResult.allowed) {
     return rateLimitResponse(rateLimitResult.resetAt);
+  }
+
+  // RBAC: requer permissão de chat
+  const auth = await requirePermission('chat');
+  if (!auth.authorized) {
+    return auth.response;
   }
 
   try {

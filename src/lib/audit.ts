@@ -29,6 +29,59 @@ export type AuditArtifactInput = {
   sizeBytes?: number;
 };
 
+// Structured evidence helpers
+export type AuditCommandRun = {
+  command: string;
+  exitCode: number;
+  durationMs?: number;
+  stdout?: string;
+  stderr?: string;
+  timestamp?: string;
+};
+
+export type AuditDiff = {
+  summary?: string;
+  files?: string[];
+  patch?: string;
+  prUrl?: string;
+};
+
+export type AuditTestResult = {
+  name: string;
+  status: 'passed' | 'failed' | 'skipped';
+  durationMs?: number;
+  details?: Record<string, unknown>;
+};
+
+export type AuditFinding = {
+  tool: string; // e.g., semgrep, npm-audit, pip-audit
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  location?: string;
+  fingerprint?: string;
+  details?: Record<string, unknown>;
+};
+
+export type AuditApproval = {
+  decision: 'approved' | 'rejected';
+  actor?: string;
+  reason?: string;
+  timestamp?: string;
+};
+
+export type AuditEvidenceInput = {
+  actor?: string;
+  repo?: AuditRepo & { commit?: string; branch?: string; hash?: string };
+  commands?: AuditCommandRun[];
+  diffs?: AuditDiff[];
+  tests?: AuditTestResult[];
+  findings?: AuditFinding[];
+  approval?: AuditApproval;
+  rollbackPlan?: string;
+  message?: string;
+  scope?: string;
+};
+
 let pool: Pool | null = null;
 const inMemoryLogs: Array<AuditLogInput & { id: number; created_at: string }> = [];
 const inMemoryArtifacts: Array<AuditArtifactInput & { id: number; created_at: string }> = [];
@@ -151,6 +204,158 @@ export async function logEvent(input: AuditLogInput) {
   inMemoryLogs.unshift({ ...input, id, created_at: new Date().toISOString(), metadata: safeMetadata || undefined });
   if (inMemoryLogs.length > 200) inMemoryLogs.splice(200);
   return id;
+}
+
+// Record structured evidence as a single audit log with normalized metadata
+export async function recordAuditEvidence(evidence: AuditEvidenceInput) {
+  const highestFinding = (evidence.findings || []).reduce<'info' | 'warn' | 'error'>((acc, f) => {
+    if (f.severity === 'critical' || f.severity === 'high') return 'error';
+    if (f.severity === 'medium') return acc === 'error' ? 'error' : 'warn';
+    return acc;
+  }, 'info');
+
+  const metadata: Record<string, unknown> = {
+    scope: evidence.scope,
+    repo: evidence.repo,
+    commands: evidence.commands,
+    diffs: evidence.diffs?.map((d) => ({ summary: d.summary, files: d.files, prUrl: d.prUrl, patch: d.patch })),
+    tests: evidence.tests,
+    findings: evidence.findings,
+    approval: evidence.approval,
+    rollbackPlan: evidence.rollbackPlan,
+  };
+
+  const logId = await logEvent({
+    actor: evidence.actor,
+    action: 'audit.evidence',
+    severity: highestFinding,
+    message: evidence.message || 'Structured evidence recorded',
+    metadata,
+    repo: evidence.repo,
+  });
+
+  // For DB-backed storage, attach artifacts referencing the evidence log
+  if (evidence.commands?.length) {
+    await logArtifact({ logId, kind: 'commands', sizeBytes: evidence.commands.length });
+  }
+  if (evidence.diffs?.length) {
+    await logArtifact({ logId, kind: 'diffs', sizeBytes: evidence.diffs.length });
+  }
+  if (evidence.tests?.length) {
+    await logArtifact({ logId, kind: 'tests', sizeBytes: evidence.tests.length });
+  }
+  if (evidence.findings?.length) {
+    await logArtifact({ logId, kind: 'findings', sizeBytes: evidence.findings.length });
+  }
+  if (evidence.approval) {
+    await logArtifact({ logId, kind: 'approval', sizeBytes: 1 });
+  }
+  if (evidence.rollbackPlan) {
+    await logArtifact({ logId, kind: 'rollback-plan', sizeBytes: evidence.rollbackPlan.length });
+  }
+
+  return logId;
+}
+
+export type AuditLogRecord = AuditLogInput & {
+  id: number;
+  created_at: string;
+};
+
+export async function fetchAuditLogs(filters?: {
+  severity?: AuditSeverity;
+  action?: string;
+  since?: string; // ISO date string
+  limit?: number;
+  repoOwner?: string;
+  repo?: string;
+}): Promise<AuditLogRecord[]> {
+  await ensureSchema();
+  const limit = Math.min(Math.max(filters?.limit ?? 200, 1), 1000);
+  const client = getPool();
+
+  // Persistent mode: query database with filters
+  if (client) {
+    const clauses: string[] = [];
+    const params: Array<string | Date | number> = [];
+    let idx = 1;
+
+    if (filters?.severity) {
+      clauses.push(`l.severity = $${idx++}`);
+      params.push(filters.severity);
+    }
+    if (filters?.action) {
+      clauses.push(`l.action ILIKE $${idx++}`);
+      params.push(`%${filters.action}%`);
+    }
+    if (filters?.since) {
+      const sinceDate = new Date(filters.since);
+      if (!isNaN(sinceDate.getTime())) {
+        clauses.push(`l.created_at >= $${idx++}`);
+        params.push(sinceDate);
+      }
+    }
+    if (filters?.repoOwner) {
+      clauses.push(`r.owner = $${idx++}`);
+      params.push(filters.repoOwner);
+    }
+    if (filters?.repo) {
+      clauses.push(`r.repo = $${idx++}`);
+      params.push(filters.repo);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const sql = `
+      SELECT l.id, l.actor, l.action, l.severity, l.message, l.metadata, l.created_at,
+             r.provider, r.owner, r.repo, r.default_branch
+      FROM audit_logs l
+      LEFT JOIN audit_repos r ON l.repo_id = r.id
+      ${where}
+      ORDER BY l.created_at DESC
+      LIMIT ${limit}
+    `;
+
+    const res = await client.query(sql, params);
+    return res.rows.map((row) => ({
+      id: Number(row.id),
+      actor: row.actor ?? undefined,
+      action: row.action,
+      severity: row.severity as AuditSeverity,
+      message: row.message ?? undefined,
+      metadata: row.metadata ?? undefined,
+      created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      repo: row.repo
+        ? {
+            provider: row.provider || 'github',
+            owner: row.owner,
+            repo: row.repo,
+            default_branch: row.default_branch ?? undefined,
+          }
+        : undefined,
+    }));
+  }
+
+  // In-memory fallback
+  let logs = [...inMemoryLogs];
+  if (filters?.severity) logs = logs.filter((l) => l.severity === filters.severity);
+  if (filters?.action) {
+    const needle = filters.action.toLowerCase();
+    logs = logs.filter((l) => (l.action || '').toLowerCase().includes(needle));
+  }
+  if (filters?.since) {
+    const sinceDate = new Date(filters.since);
+    if (!isNaN(sinceDate.getTime())) {
+      logs = logs.filter((l) => new Date(l.created_at) >= sinceDate);
+    }
+  }
+  if (filters?.repoOwner) {
+    logs = logs.filter((l) => l.repo?.owner === filters.repoOwner);
+  }
+  if (filters?.repo) {
+    logs = logs.filter((l) => l.repo?.repo === filters.repo);
+  }
+
+  return logs.slice(0, limit);
 }
 
 export async function logArtifact(input: AuditArtifactInput) {

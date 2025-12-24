@@ -13,6 +13,7 @@ import { analyzeImpact } from '../lib/impact';
 import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle, markMitigation, recordRegression } from '../lib/metrics';
 import { logEvent } from '../lib/audit';
+import { runSandbox, SandboxResult } from '../lib/sandbox';
 
 const execFileAsync = promisify(execFile);
 
@@ -38,6 +39,7 @@ export type TaskResult = {
   error?: string;
   startedAt: Date;
   completedAt?: Date;
+  sandboxPhase?: 'pre' | 'post';
 };
 
 export type OrchestrationState = {
@@ -121,6 +123,7 @@ export class Orchestrator {
     let twinResult: TwinBuilderResult | undefined;
     const incident = context?.incident as IncidentAlert | undefined;
     const repoPath = context?.repoPath || this.taskContext.repoPath;
+    if (repoPath) this.taskContext.repoPath = repoPath;
 
     if (incident && repoPath) {
       this.log('Fase 0: Twin Builder (preparando contexto de incidente)');
@@ -147,6 +150,13 @@ export class Orchestrator {
           // Enriquecer sandbox config com harness commands
           if (this.taskContext.sandbox) {
             this.taskContext.sandbox.commands = twinResult.harness.commands;
+            this.taskContext.sandbox.harnessCommands = {
+              run: twinResult.harness.commands,
+              setup: twinResult.harness.setup || [],
+              teardown: twinResult.harness.teardown || [],
+              env: twinResult.harness.env,
+              workdir: twinResult.harness.workdir,
+            };
           }
         }
 
@@ -182,6 +192,12 @@ export class Orchestrator {
       repoInfo: context?.repoInfo,
       twinContext: twinResult, // Passa contexto do twin para o planner
     });
+
+    // Guardrail adicional: se risco vier alto/crítico, exigir aprovação mesmo que o planner não marque
+    if ((plan.riskLevel === 'high' || plan.riskLevel === 'critical') && !plan.requiresApproval) {
+      plan.requiresApproval = true;
+      this.log('⚠️ Risco alto/crítico detectado: aprovação obrigatória forçada');
+    }
 
     this.state = {
       id: `orch-${Date.now()}`,
@@ -247,6 +263,12 @@ export class Orchestrator {
     if (this.state.status !== 'failed') {
       this.state.status = 'completed';
     }
+
+    // Stream tail: report risk level and last known rollback plan
+    const rollbackPlan = this.getRollbackPlan();
+    const rollbackPreview = rollbackPlan ? (rollbackPlan.length > 220 ? `${rollbackPlan.slice(0, 220)}...` : rollbackPlan) : 'não informado';
+    this.log(`📊 Resumo final: risco=${this.state.plan.riskLevel}; rollback=${rollbackPreview}`);
+
     const incidentId = this.taskContext.incidentId as string | undefined;
     if (incidentId) {
       markMitigation(incidentId, this.state.status === 'completed' ? 'mitigated' : 'failed');
@@ -289,6 +311,7 @@ export class Orchestrator {
       agent: task.agent,
       output: null,
       startedAt: new Date(),
+      sandboxPhase: (task as any).sandboxPhase,
     };
 
     const descLower = (task.description || '').toLowerCase();
@@ -340,6 +363,27 @@ export class Orchestrator {
           break;
 
         case 'operator': {
+          // Se for fase sandbox (pre/post), apenas roda sandbox/harness e registra resultado
+          if ((task as any).sandboxPhase) {
+            const sbResult = await this.runSandboxIfEnabled(task);
+            if (!sbResult) {
+              throw new Error('Sandbox não executado na fase ' + (task as any).sandboxPhase);
+            }
+            const phase = (task as any).sandboxPhase as 'pre' | 'post';
+            const reproduced = sbResult.reproductionSuccessful === true;
+            const passed = sbResult.success;
+            if (phase === 'pre') {
+              this.log(`🧪 Sandbox pré (harness): ${passed ? 'passou (incomum)' : reproduced ? 'reproduziu bug (esperado)' : 'falhou sem reproduzir'}`);
+            } else {
+              this.log(`✅ Sandbox pós: ${passed ? 'corrigido (passou)' : 'falhou, incidente persiste'}`);
+            }
+            if ((task as any).sandboxPhase === 'post' && !sbResult.success) {
+              throw new Error('Sandbox pós-patch falhou; incidente não mitigado');
+            }
+            result.output = sbResult;
+            break;
+          }
+
           await this.runSandboxIfEnabled(task);
           result.output = await runOperator({
             ...this.taskContext,
@@ -438,14 +482,14 @@ export class Orchestrator {
     this.taskContext = { ...this.taskContext, ...context };
   }
 
-  private async runSandboxIfEnabled(task: SubTask) {
+  private async runSandboxIfEnabled(task: SubTask): Promise<SandboxResult | null> {
     const sandbox = this.taskContext.sandbox as SandboxConfig | undefined;
-    if (!sandbox?.enabled) return;
+    if (!sandbox?.enabled) return null;
 
     const repoPath = sandbox.repoPath || this.taskContext.repoPath;
     if (!repoPath) {
       this.log('Sandbox habilitado, mas repoPath não foi fornecido; etapa pulada');
-      return;
+      return null;
     }
 
     // Em Windows sem WSL, o runner bash não funciona; falha ou apenas alerta conforme failMode
@@ -454,40 +498,39 @@ export class Orchestrator {
       const msg = 'Sandbox requer WSL/Docker; em Windows puro o runner bash não está disponível.';
       this.log(msg);
       if ((sandbox.failMode || 'fail') === 'fail') throw new Error(msg);
-      return;
+      return null;
     }
 
-    const repoPathForRunner = this.toDockerPath(repoPath);
-    const runnerPath = sandbox.runnerPath || path.join(process.cwd(), 'scripts', 'runner_sandbox.sh');
+    const harness = sandbox.harnessCommands;
+    const commands = sandbox.commands;
     const command = sandbox.command || this.autoDetectSandboxCommand(repoPath, sandbox.languageHint);
     const timeoutMs = sandbox.timeoutMs ?? 15 * 60 * 1000;
-    const failMode = sandbox.failMode || 'fail';
+    const failMode = (task as any).sandboxPhase === 'pre' ? 'warn' : sandbox.failMode || 'fail';
 
-    if (!fs.existsSync(runnerPath)) {
-      const msg = `Runner sandbox não encontrado em ${runnerPath}`;
-      this.log(msg);
-      if (failMode === 'fail') throw new Error(msg);
-      return;
+    if (!harness && !commands?.length && !command) {
+      this.log('Sandbox: nenhum comando definido (pulando)');
+      return null;
     }
 
-    this.log(`🔒 Sandbox: executando comando opcional (${command}) antes de [${task.agent}]`);
+    this.log(`🔒 Sandbox: executando ${harness ? 'harness Twin' : 'comando autodetect'} antes de [${task.agent}]`);
 
-    try {
-      const { stdout, stderr } = await execFileAsync('bash', [runnerPath, repoPathForRunner, command], {
-        timeout: timeoutMs,
-        maxBuffer: 5 * 1024 * 1024,
-      });
-      if (stdout) this.log(`Sandbox stdout: ${stdout.slice(0, 2000)}`);
-      if (stderr) this.log(`Sandbox stderr: ${stderr.slice(0, 2000)}`);
-      this.log('Sandbox finalizado com sucesso');
-    } catch (err: any) {
-      const stderr = err?.stderr?.toString?.() || err?.message || String(err);
-      this.log(`Sandbox falhou (${failMode}): ${stderr}`);
-      if (failMode === 'fail') {
-        throw new Error(`Sandbox falhou: ${stderr}`);
-      }
-      // warn mode: continuar mesmo com falha
+    const result = await runSandbox({
+      enabled: true,
+      repoPath,
+      harnessCommands: harness,
+      commands,
+      command,
+      timeoutMs,
+      failMode: failMode as any,
+      languageHint: sandbox.languageHint,
+      onLog: (m) => this.log(m),
+    });
+
+    if (!result.success && failMode === 'fail') {
+      throw new Error(`Sandbox falhou: ${result.stderr || result.stdout || 'erro desconhecido'}`);
     }
+
+    return result;
   }
 
   private toDockerPath(inputPath: string): string {
@@ -553,6 +596,19 @@ export class Orchestrator {
     }
 
     return lines.join('\n');
+  }
+
+  private getRollbackPlan(): string | undefined {
+    if (!this.state) return undefined;
+    const results = Array.from(this.state.results.values());
+    for (let i = results.length - 1; i >= 0; i--) {
+      const out = results[i]?.output as any;
+      const rollback = out?.rollbackInstructions || out?.rollbackPlan;
+      if (rollback && typeof rollback === 'string' && rollback.trim().length > 0) {
+        return rollback.trim();
+      }
+    }
+    return undefined;
   }
 }
 

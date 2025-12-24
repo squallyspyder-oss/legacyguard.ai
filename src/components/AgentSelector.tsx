@@ -1,6 +1,7 @@
 import React from 'react';
 
 export const AGENT_ROLES = [
+  { key: 'legacyAssist', label: '🧭 LegacyAssist — Guia Assistido', description: 'Assistente do sistema: orienta próximos passos, sugere pesquisas (web/RAG) e mostra caminhos guiados' },
   { key: 'chat', label: '💬 Chat Livre — Pesquisa/Brainstorm', description: 'Perguntas rápidas, pesquisa leve, brainstorm econômico com opção de aprofundar' },
   { key: 'orchestrate', label: '🎭 Orquestrador — Planeja e coordena agentes', description: 'Quebra tarefas complexas, coordena múltiplos agentes automaticamente' },
   { key: 'advisor', label: '🔍 Advisor — Analisa e sugere', description: 'Análise de código, sugestões de melhorias, identificação de problemas' },
