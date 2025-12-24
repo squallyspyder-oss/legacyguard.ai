@@ -1,7 +1,15 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-# LegacyGuard Console
+# 🛡️ LegacyGuard Console
 
-Plataforma Next.js/TypeScript para orquestrar agentes de revisão, refatoração e segurança em código legado, com chat livre, sandbox opcional e trilha de auditoria. Este README descreve a arquitetura atual e as etapas pendentes, incluindo o futuro sistema de tokens/precificação.
+**Plataforma de orquestração de agentes AI para manutenção segura de código legado.**
+
+LegacyGuard é uma solução Next.js/TypeScript que coordena múltiplos agentes especializados (análise, refatoração, revisão, execução) com foco em **segurança**, **auditoria** e **controle humano**. Inclui:
+
+- 🧭 **LegacyAssist** — Modo guiado que orienta o usuário passo a passo, sugere pesquisas (RAG/Web/Brainstorm) e valida ações antes de qualquer execução
+- 🎭 **Orquestrador Multi-Agente** — Planner cria planos, waves executam em paralelo, aprovação humana obrigatória para ações de risco
+- 🧪 **Twin Builder** — Reproduz incidentes em ambiente controlado, gera harness de testes e fixtures sintéticas
+- 🔒 **Sandbox Isolado** — Execução em container Docker com políticas de rede/FS/recursos (strict/permissive)
+- 📊 **Auditoria Estruturada** — Logs, evidências (comandos, diffs, testes, findings, approvals, rollback plans) e export JSON/CSV
+- 🛡️ **Guardrails** — RBAC, rate limiting, aprovação forçada para risco alto/crítico, mascaramento de secrets
 
 ## Quick Start
 
@@ -19,6 +27,12 @@ npm run dev:win
 npm run worker
 
 # Testes
+npm test
+
+# Testes com sandbox real (requer WSL/Docker)
+# Abra terminal WSL, navegue até o projeto e:
+chmod +x scripts/runner_sandbox.sh
+export LEGACYGUARD_SANDBOX_ENABLED=true
 npm test
 ```
 
@@ -53,74 +67,291 @@ OPENAI_CHEAP_MODEL=gpt-4o-mini
 OPENAI_DEEP_MODEL=gpt-4o
 ```
 
+## Arquitetura
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        LegacyGuard UI                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │ ChatInterface│  │AgentSelector │  │  SettingsSidebar     │  │
+│  │ (LegacyAssist│  │ (modo/role)  │  │  (config/tema)       │  │
+│  │  + Messages) │  │              │  │                      │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         API Routes                              │
+│  /api/agents  │  /api/chat  │  /api/audit/export  │ /api/index │
+│    (RBAC)     │   (RBAC)    │  (RBAC + filters)   │   (RAG)    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+       ┌────────────┐  ┌────────────┐  ┌────────────┐
+       │   Redis    │  │  Postgres  │  │   OpenAI   │
+       │  (queue)   │  │  (audit)   │  │  (LLMs)    │
+       └────────────┘  └────────────┘  └────────────┘
+              │
+              ▼
+       ┌────────────────────────────────────────────┐
+       │              Agent Worker                  │
+       │  Orchestrator → Planner → Agents → Sandbox │
+       └────────────────────────────────────────────┘
+```
+
 ## Componentes
-- **UI**: Chat em `src/components/ChatInterface.tsx`, seletor de agente em `src/components/AgentSelector.tsx`, tema global em `src/app/globals.css`, landing em `src/app/page.tsx`.
-- **Agentes**: planner, advisor, operator, reviewer, executor, advisor-impact (impacto) e chat livre (`src/agents/*`).
-- **Orquestração**: `src/agents/orchestrator.ts` coordena waves, exige aprovação humana para executor quando necessário, e pode rodar sandbox antes do executor.
-- **APIs**:
-  - `/api/agents`: enfileira tarefas (orchestrate/approve/roles diretas) e registra audit log.
-  - `/api/agents/stream`: SSE de progresso.
-  - `/api/agent`: fluxo single-agent com Semgrep, npm/pip audit, heurísticas de compliance e geração de patches/testes.
-  - `/api/chat`: modo chat livre (econômico/profundo) com sugestão de escalar para orquestração.
-  - `/api/index`: endpoint para indexar repositório (RAG).
-- **Worker**: `scripts/agentWorker.ts` consome fila Redis, executa agentes e publica resultados.
-- **Sandbox**: `scripts/runner_sandbox.sh` para rodar testes em container antes do executor (config via contexto/ENV).
-- **Auditoria**: `src/lib/audit.ts` grava logs/artifacts em Postgres (usa AUDIT_DB_URL ou PGVECTOR_URL). Metadados são sanitizados automaticamente.
-- **Segurança**: `src/lib/secrets.ts` mascara tokens e secrets em logs/SSE.
-### Orquestração completa
-1. UI aciona `/api/agents` com `role: "orchestrate"` (pode enviar `context` e `sandbox` opcional).
-2. Planner gera plano; orquestrador executa waves; pausa para aprovação antes de executor se requerido.
-3. SSE em `/api/agents/stream` atualiza o chat; botão de aprovação chama `role: "approve"`.
 
-### Chat Livre (econômico/profundo)
-- `role: "chat"` na UI chama `/api/chat` diretamente (sem fila).
-- Modelo barato por padrão; toggle “Pesquisa profunda” usa modelo maior.
-- Heurística sugere escalar para orquestração quando detectar intenção de ação (patch/PR/merge/testes/refator).
+### UI (`src/components/`)
+| Arquivo | Descrição |
+|---------|-----------|
+| `ChatInterface.tsx` | Chat principal com LegacyAssist, mensagens tipadas, suporte a Twin Builder |
+| `AgentSelector.tsx` | Seletor de modo: LegacyAssist, Orquestração, Chat econômico/profundo |
+| `SettingsSidebar.tsx` | Configurações de tema, modelo, sandbox |
 
-### Single-agent rápido
-- `/api/agent` roda Semgrep + npm/pip audit + heurísticas de compliance e produz patches/testes no reply.
+### Agentes (`src/agents/`)
+| Agente | Descrição |
+|--------|-----------|
+| `planner.ts` | Gera plano com waves, riskLevel (low→critical), força aprovação para alto/crítico |
+| `orchestrator.ts` | Coordena waves, guarda runtime de aprovação, emite tail com risk + rollback |
+| `advisor.ts` | Análise de código, sugestões de refatoração |
+| `reviewer.ts` | Code review, validação de patches |
+| `executor.ts` | Aplica patches, cria PRs (requer aprovação) |
+| `operator.ts` | Operações de infraestrutura |
+| `chat.ts` | Chat livre econômico/profundo |
+| `twin-builder.ts` | Reproduz incidentes, gera harness/fixtures |
+
+### Analyzers (`src/analyzers/`)
+| Analyzer | Descrição |
+|----------|-----------|
+| `legacy-profiler.ts` | Detecta padrões legados, dívida técnica |
+| `behavior-classifier.ts` | Classifica comportamento de código |
+| `harness-generator.ts` | Gera test harness para código legado |
+
+### APIs (`src/app/api/`)
+| Endpoint | Método | Descrição |
+|----------|--------|-----------|
+| `/api/agents` | POST | Enfileira tarefas (RBAC: orchestrate/approve/execute) |
+| `/api/agents/stream` | GET | SSE de progresso em tempo real |
+| `/api/agents/logs` | GET | Logs de sessão |
+| `/api/chat` | POST | Chat livre (RBAC: chat permission) |
+| `/api/audit/export` | GET | Export JSON/CSV com filtros (RBAC: audit:export) |
+| `/api/index` | POST | Indexação de repositório (RAG) |
+| `/api/incidents/*` | POST | Ingestão de incidentes (Datadog, Sentry, OTEL) |
+| `/api/config` | GET | Configuração do cliente |
+| `/api/metrics` | GET | Métricas de uso |
+
+### Bibliotecas (`src/lib/`)
+| Módulo | Descrição |
+|--------|-----------|
+| `audit.ts` | Logs estruturados, evidências tipadas, export DB/memory |
+| `rbac.ts` | Role-based access control com permissions granulares |
+| `sandbox.ts` | Isolamento Docker (strict/permissive), políticas de rede/FS/recursos |
+| `secrets.ts` | Mascaramento automático de tokens/secrets |
+| `queue.ts` | Fila Redis para workers |
+| `rate-limit.ts` | Rate limiting por IP/usuário |
+| `pricing.ts` | Estimativa de custo por modelo/tokens |
+| `indexer.ts` / `indexer-pgvector.ts` | RAG com pgvector |
+| `playbook-dsl.ts` | DSL para playbooks de automação |
+## Fluxos Principais
+
+### 🧭 LegacyAssist (modo guiado)
+1. Usuário seleciona "LegacyAssist" no `AgentSelector`
+2. Sistema apresenta opções de pesquisa (RAG, Web, Brainstorm)
+3. Cada etapa é validada antes de prosseguir
+4. Sugestões contextuais baseadas no código/incidente
+5. Twin Builder pode ser acionado para reproduzir problemas
+
+### 🎭 Orquestração Completa
+1. UI aciona `/api/agents` com `role: "orchestrate"`
+2. **Planner** analisa e gera plano com:
+   - Waves (execução paralela)
+   - `riskLevel`: low | medium | high | critical
+   - `requiresApproval`: forçado `true` para high/critical
+   - `sandboxPhase`: pre | post | both | none
+3. **Orchestrator** executa waves com aprovação humana quando requerida
+4. SSE em `/api/agents/stream` atualiza UI em tempo real
+5. **Stream tail** inclui: `riskLevel`, `rollbackPlan` (preview 200 chars)
+
+### 💬 Chat Livre
+- `role: "chat"` chama `/api/chat` diretamente (sem fila)
+- Modelo econômico por padrão; toggle "Pesquisa profunda" usa modelo maior
+- Heurística sugere escalar para orquestração ao detectar intenção de ação
+
+### 🧪 Twin Builder
+1. Incidente ingestado via `/api/incidents/*` (Datadog, Sentry, OTEL)
+2. `twin-builder.ts` analisa stacktrace e contexto
+3. Gera harness de teste + fixtures sintéticas
+4. Executa em sandbox isolado para reproduzir comportamento
+
+## Segurança e Controles
+
+### 🔐 RBAC (Role-Based Access Control)
+```typescript
+// Roles e permissões definidas em src/lib/rbac.ts
+const permissions = {
+  admin:    ['orchestrate', 'approve', 'execute', 'chat', 'audit:export', '*'],
+  operator: ['orchestrate', 'approve', 'chat'],
+  viewer:   ['chat'],
+};
+```
+
+### ✅ Aprovação Obrigatória
+- Planner força `requiresApproval: true` para `riskLevel: high | critical`
+- Orchestrator valida em runtime antes de executar ações de risco
+- UI exibe botão de aprovação; usuário deve confirmar explicitamente
+
+### 🔒 Sandbox Isolado
+```typescript
+// Perfis de isolamento em src/lib/sandbox.ts
+type IsolationProfile = 'strict' | 'permissive';
+
+// Políticas configuráveis:
+networkPolicy: 'none' | 'bridge'  // rede do container
+fsPolicy: 'readonly' | 'readwrite' // filesystem
+memoryLimit: string               // ex: '512m'
+cpuLimit: string                  // ex: '1.0'
+tmpfsSizeMb: number               // RAM disk para /tmp
+
+// Docker args aplicados:
+// --pids-limit=256, --security-opt no-new-privileges, --cap-drop=ALL
+```
+
+### 📊 Auditoria Estruturada
+```typescript
+// Tipos de evidência em src/lib/audit.ts
+type AuditEvidenceInput =
+  | AuditCommandRun   // { type: 'command', command, exitCode, stdout, stderr }
+  | AuditDiff         // { type: 'diff', filePath, before, after }
+  | AuditTestResult   // { type: 'test', framework, passed, failed, skipped, duration }
+  | AuditFinding      // { type: 'finding', tool, severity, message, location }
+  | AuditApproval     // { type: 'approval', approvedBy, reason, timestamp }
+  | { type: 'rollback_plan', steps: string[] };
+```
+
+### 🛡️ Mascaramento de Secrets
+- Tokens GitHub/OpenAI mascarados automaticamente em logs e SSE
+- Pattern matching para API keys, passwords, tokens
+- Configurável em `src/lib/secrets.ts`
 
 ## Configuração / Env
-- **OpenAI**: `OPENAI_API_KEY`; modelos podem ser override em chat (`OPENAI_CHEAP_MODEL`, `OPENAI_DEEP_MODEL`).
-- **Redis**: para fila `agents` e stream de resultados (config em `src/lib/queue`, não mostrado aqui).
-- **Postgres**: `AUDIT_DB_URL` ou `PGVECTOR_URL` para auditoria; ensureSchema cria tabelas/índices.
-- **Sandbox**: `LEGACYGUARD_SANDBOX_ENABLED=true`, `LEGACYGUARD_SANDBOX_REPO_PATH`, `LEGACYGUARD_SANDBOX_COMMAND`, `LEGACYGUARD_SANDBOX_RUNNER`, `LEGACYGUARD_SANDBOX_TIMEOUT_MS`.
-- **Repo path default**: `LEGACYGUARD_REPO_PATH` usado no contexto.
-- **Desabilitar Turbopack (Windows)**: `NEXT_DISABLE_TURBOPACK=1` para rodar `npm run dev` sem travar.
 
-## Pricing / Quotas (planejado)
-- Placeholder em `src/lib/pricing.ts`: planos free/pro/enterprise; preços por 1k tokens (inclui gpt-5.1-codex-max, gpt-4o, gpt-4o-mini); função `estimateCostUSD` e tracker in-memory.
-- Chat já retorna `usage` (prompt/completion tokens + estimativa USD) e `costTier`.
-- **A implementar**: persistência por usuário/mês (Postgres), associação com plano do usuário (`session.plan`), bloqueio ou overage conforme `hardCap`, exibir saldo/custo na UI, integração futura com billing da Vercel.
+| Variável | Descrição | Exemplo |
+|----------|-----------|---------|
+| `OPENAI_API_KEY` | API key OpenAI | `sk-...` |
+| `OPENAI_CHEAP_MODEL` | Modelo econômico | `gpt-4o-mini` |
+| `OPENAI_DEEP_MODEL` | Modelo profundo | `gpt-4o` |
+| `NEXTAUTH_SECRET` | Secret para NextAuth | UUID |
+| `NEXTAUTH_URL` | URL da aplicação | `http://localhost:3000` |
+| `GITHUB_ID` | OAuth Client ID | GitHub App |
+| `GITHUB_SECRET` | OAuth Client Secret | GitHub App |
+| `REDIS_URL` | URL do Redis | `redis://localhost:6379` |
+| `AUDIT_DB_URL` | Postgres para auditoria | `postgres://...` |
+| `PGVECTOR_URL` | Postgres + pgvector (RAG) | `postgres://...` |
+| `LEGACYGUARD_SANDBOX_ENABLED` | Habilitar sandbox | `true` |
+| `LEGACYGUARD_SANDBOX_REPO_PATH` | Path do repo no sandbox | `/workspace/repo` |
+| `LEGACYGUARD_SANDBOX_COMMAND` | Comando de teste | `npm test` |
+| `LEGACYGUARD_SANDBOX_TIMEOUT_MS` | Timeout do sandbox | `900000` |
 
-## Passos recomendados (roadmap)
-1) **Estabilizar dev**: no Windows, `NEXT_DISABLE_TURBOPACK=1 npm run dev`.
-2) **Auditoria**: rodar ensureSchema ou `scripts/audit_schema.sql`; configurar AUDIT_DB_URL.
-3) **CI**: workflow lint/test; opcional Semgrep; gate de merge.
-4) **Sandbox**: política configurável (fail ou warn) e presets por stack; habilitar via ENV.
-5) **RAG/Indexação**: ligar advisor/advisor-impact ao indexador/pgvector; expor cron/endpoint de index.
-6) **Quotas/Billing**: persistir uso, ler plano do usuário, aplicar limites; exibir saldo/custo na UI.
-7) **UX**: exibir tier/custo estimado no chat; erros SSE/worker mais claros; tooltips sobre quando usar orquestração vs chat.
+## API de Export de Auditoria
 
-## Scripts úteis
-- `npm run dev` — dev server (Linux/Mac)
-- `npm run dev:win` — dev server (Windows, sem Turbopack)
-- `npm run build` — build de produção
-- `npm run worker` — inicia worker da fila
-- `npm test` — roda testes com Vitest
-- `npm run test:watch` — testes em modo watch
-- `npm run lint` — lint com ESLint
+```bash
+# GET /api/audit/export
+# Requer RBAC: audit:export permission
+
+# Parâmetros de filtro:
+?format=json|csv           # formato de saída
+&severity=info|warn|error  # filtrar por severidade
+&action=orchestrate|approve|execute|chat  # filtrar por ação
+&since=2024-01-01          # logs após esta data
+&owner=org-name            # filtrar por owner
+&repo=repo-name            # filtrar por repositório
+&limit=100                 # máximo de registros
+
+# Exemplo:
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:3000/api/audit/export?format=csv&severity=error&limit=50"
+```
+
+## Pricing / Quotas
+
+- Placeholder em `src/lib/pricing.ts`: planos free/pro/enterprise
+- Preços por 1k tokens (gpt-4o, gpt-4o-mini, etc.)
+- Chat retorna `usage` (tokens) e `costTier`
+- **A implementar**: persistência por usuário, billing integration
+
+## Roadmap
+
+- [x] Orquestração multi-agente com waves
+- [x] Aprovação obrigatória para risco alto/crítico
+- [x] RBAC em endpoints críticos
+- [x] Sandbox isolado com políticas configuráveis
+- [x] Auditoria estruturada com evidências tipadas
+- [x] Export de auditoria (JSON/CSV com filtros)
+- [x] Mascaramento de secrets
+- [x] Rate limiting
+- [x] LegacyAssist (modo guiado)
+- [x] Twin Builder (reprodução de incidentes)
+- [ ] Persistência de quotas por usuário
+- [ ] Dashboard de métricas
+- [ ] Integração com billing (Stripe/Vercel)
+- [ ] Webhooks para notificações
+- [ ] Multi-tenancy
+
+## Scripts
+
+| Comando | Descrição |
+|---------|-----------|
+| `npm run dev` | Dev server (Linux/Mac) |
+| `npm run dev:win` | Dev server (Windows, sem Turbopack) |
+| `npm run build` | Build de produção |
+| `npm run worker` | Inicia worker da fila Redis |
+| `npm test` | Roda testes com Vitest (58 testes) |
+| `npm run test:watch` | Testes em modo watch |
+| `npm run lint` | Lint com ESLint |
 
 ## CI/CD
+
 Workflow em `.github/workflows/ci.yml`:
 - Lint + type check
-- Testes automatizados
-- Build
+- Testes automatizados (58 testes, 11 arquivos)
+- Build de produção
 - Scan de segurança com Semgrep
 
-## Notas de segurança
-- Tokens GitHub/OpenAI são mascarados automaticamente em logs e auditoria (`src/lib/secrets.ts`).
-- Executor/merge exige aprovação humana quando `requiresApproval`.
-- Sandbox recomendado antes de executor para repositórios sensíveis.
-- Política de sandbox configurável: `failMode: 'fail'` (padrão) ou `'warn'`.
-- Presets de comando por stack (npm/yarn/pnpm, pytest, go test, cargo test) detectados automaticamente.
+## Testes
+
+```bash
+# Rodar todos os testes
+npm test
+
+# Testes específicos
+npm test -- tests/rbac.test.ts
+npm test -- tests/audit-export.test.ts
+npm test -- tests/orchestrator-sandbox.test.ts
+
+# Coverage dos testes:
+# - RBAC: roles, permissions, getUserRole
+# - Audit: export, evidências estruturadas, filtros
+# - Sandbox: isolation profiles, políticas
+# - Pricing: estimativas, planos
+# - Rate Limit: sliding window
+# - Schemas: validação Zod
+# - Playbook DSL: parsing, execução
+```
+
+## Notas de Segurança
+
+| Controle | Implementação |
+|----------|---------------|
+| Autenticação | NextAuth + GitHub OAuth |
+| Autorização | RBAC em todos os endpoints críticos |
+| Aprovação | Forçada para riskLevel high/critical |
+| Sandbox | Docker isolado com --cap-drop=ALL |
+| Secrets | Mascaramento automático em logs/SSE |
+| Rate Limit | Sliding window por IP/usuário |
+| Auditoria | Logs estruturados + evidências tipadas |
+| Export | RBAC + rate limit em /api/audit/export |
+
+## Licença
+
+MIT
