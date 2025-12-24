@@ -5,6 +5,7 @@ import { emitSandboxLog } from '../../../lib/sandbox-logs';
 import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '../../../lib/rate-limit';
 import { agentsRequestSchema, validateRequest, validationErrorResponse } from '../../../lib/schemas';
 import { requirePermission, Permission } from '../../../lib/rbac';
+import { enforceQuota, getCurrentMonth, isCircuitTripped, getCircuitStatus } from '../../../lib/quotas';
 
 export async function POST(req: Request) {
   // Rate limiting (strict for expensive LLM operations)
@@ -34,6 +35,12 @@ export async function POST(req: Request) {
     return auth.response;
   }
 
+  // Circuit breaker: global cost spike protection
+  if (isCircuitTripped()) {
+    const status = await getCircuitStatus();
+    return NextResponse.json({ error: 'Service temporarily paused due to abnormal usage', circuit: status }, { status: 503 });
+  }
+
   const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Montar payload baseado no tipo de tarefa
@@ -58,6 +65,20 @@ export async function POST(req: Request) {
       failMode: body.sandbox?.failMode || process.env.LEGACYGUARD_SANDBOX_FAIL_MODE || 'fail',
       languageHint: body.sandbox?.languageHint,
     };
+
+    // Pre-run quota enforcement: reserve conservative token estimate
+    const userId = (auth as any).user?.email || (auth as any).user?.id || 'anonymous';
+    const month = getCurrentMonth();
+    const perRequestLimit = Number(process.env.MAX_TOKENS_PER_REQUEST || 50000);
+    const estimateTokens = body.estimateTokens ?? perRequestLimit;
+    if (estimateTokens > perRequestLimit) {
+      return NextResponse.json({ error: 'Estimate exceeds per-request token limit', limit: perRequestLimit }, { status: 400 });
+    }
+
+    const quotaCheck = await enforceQuota({ userId, role: (auth as any).role, month, promptTokens: estimateTokens, completionTokens: 0, model: process.env.OPENAI_DEEP_MODEL || 'gpt-4o' });
+    if (!quotaCheck.allowed) {
+      return NextResponse.json({ error: 'Quota exceeded', reason: quotaCheck.reason, plan: quotaCheck.planId }, { status: 402 });
+    }
 
     queuePayload = {
       role: 'orchestrate',

@@ -56,6 +56,29 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (user_id, month)
     );
+
+    CREATE TABLE IF NOT EXISTS user_usage_daily (
+      user_id TEXT NOT NULL,
+      day DATE NOT NULL,
+      tokens_used BIGINT NOT NULL DEFAULT 0,
+      usd_used NUMERIC(12,4) NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, day)
+    );
+
+    CREATE TABLE IF NOT EXISTS global_usage_hourly (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      usd NUMERIC(12,4) NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS circuit_state (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      tripped_until TIMESTAMPTZ,
+      threshold_usd NUMERIC(12,4),
+      paused_ms BIGINT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 }
 
@@ -165,6 +188,42 @@ export async function enforceQuota(params: {
       };
     }
     await client.query('COMMIT');
+    // record daily rollup
+    try {
+      await client.query(
+        `INSERT INTO user_usage_daily (user_id, day, tokens_used, usd_used)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, day) DO UPDATE
+         SET tokens_used = user_usage_daily.tokens_used + EXCLUDED.tokens_used,
+             usd_used = user_usage_daily.usd_used + EXCLUDED.usd_used,
+             updated_at = NOW()`,
+        [params.userId, new Date().toISOString().slice(0, 10), tokens, cost.usd]
+      );
+    } catch (err) {
+      // non-fatal
+    }
+
+    // record hourly global usage and evaluate circuit
+    try {
+      await client.query('INSERT INTO global_usage_hourly (usd) VALUES ($1)', [cost.usd]);
+      const threshold = Number(process.env.QUOTA_CIRCUIT_THRESHOLD_USD || 1000);
+      const pauseMs = Number(process.env.QUOTA_CIRCUIT_PAUSE_MS || 10 * 60 * 1000);
+      const res = await client.query(`SELECT COALESCE(SUM(usd),0) as sum FROM global_usage_hourly WHERE ts > NOW() - INTERVAL '1 hour'`);
+      const sum = Number(res.rows[0]?.sum || 0);
+      if (sum >= threshold) {
+        tripCircuitFor(pauseMs);
+        try {
+          await client.query(
+            `INSERT INTO circuit_state (id, tripped_until, threshold_usd, paused_ms, updated_at)
+             VALUES (1, NOW() + ($1 || ' milliseconds')::interval, $2, $3, NOW())
+             ON CONFLICT (id) DO UPDATE SET tripped_until = NOW() + ($1 || ' milliseconds')::interval, threshold_usd = $2, paused_ms = $3, updated_at = NOW()`,
+            [pauseMs, threshold, pauseMs]
+          );
+        } catch {}
+      }
+    } catch (err) {
+      // non-fatal
+    }
     return {
       allowed: true,
       planId,
@@ -186,6 +245,21 @@ export function isCircuitTripped(): boolean {
 
 export function tripCircuitFor(ms: number) {
   circuitTrippedUntil = Date.now() + ms;
+}
+
+export async function getCircuitStatus() {
+  const client = getPool();
+  if (!client) {
+    return { tripped: isCircuitTripped(), until: circuitTrippedUntil, thresholdUsd: Number(process.env.QUOTA_CIRCUIT_THRESHOLD_USD || 1000), pausedMs: Number(process.env.QUOTA_CIRCUIT_PAUSE_MS || 600000) };
+  }
+  try {
+    const res = await client.query('SELECT tripped_until, threshold_usd, paused_ms FROM circuit_state WHERE id = 1');
+    const row = res.rows[0];
+    const until = row?.tripped_until ? new Date(row.tripped_until).getTime() : circuitTrippedUntil || null;
+    return { tripped: Date.now() < (until || 0), until, thresholdUsd: Number(row?.threshold_usd || process.env.QUOTA_CIRCUIT_THRESHOLD_USD || 1000), pausedMs: Number(row?.paused_ms || process.env.QUOTA_CIRCUIT_PAUSE_MS || 600000) };
+  } catch {
+    return { tripped: isCircuitTripped(), until: circuitTrippedUntil, thresholdUsd: Number(process.env.QUOTA_CIRCUIT_THRESHOLD_USD || 1000), pausedMs: Number(process.env.QUOTA_CIRCUIT_PAUSE_MS || 600000) };
+  }
 }
 
 export function getCurrentMonth(): string {
