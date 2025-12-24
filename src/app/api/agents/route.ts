@@ -5,7 +5,7 @@ import { emitSandboxLog } from '../../../lib/sandbox-logs';
 import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '../../../lib/rate-limit';
 import { agentsRequestSchema, validateRequest, validationErrorResponse } from '../../../lib/schemas';
 import { requirePermission, Permission } from '../../../lib/rbac';
-import { enforceQuota, getCurrentMonth, isCircuitTripped, getCircuitStatus } from '../../../lib/quotas';
+import { enforceQuota, getCurrentMonth, isCircuitTripped, getCircuitStatus, reserveQuota } from '../../../lib/quotas';
 
 export async function POST(req: Request) {
   // Rate limiting (strict for expensive LLM operations)
@@ -79,6 +79,12 @@ export async function POST(req: Request) {
     if (!quotaCheck.allowed) {
       return NextResponse.json({ error: 'Quota exceeded', reason: quotaCheck.reason, plan: quotaCheck.planId }, { status: 402 });
     }
+
+    // Create reservation so worker can refund if orchestration fails
+    const estCost = estimateTokens * 0.0001; // conservative USD estimate when exact cost unknown
+    try {
+      await reserveQuota({ taskId, userId, month, tokens: estimateTokens, usd: estCost });
+    } catch {}
 
     queuePayload = {
       role: 'orchestrate',

@@ -79,6 +79,19 @@ async function ensureSchema() {
       paused_ms BIGINT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS quota_reservations (
+      task_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      month TEXT NOT NULL,
+      tokens_reserved BIGINT NOT NULL DEFAULT 0,
+      usd_reserved NUMERIC(12,4) NOT NULL DEFAULT 0,
+      consumed BOOLEAN DEFAULT FALSE,
+      refunded BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      consumed_at TIMESTAMPTZ,
+      refunded_at TIMESTAMPTZ
+    );
   `);
 }
 
@@ -234,6 +247,94 @@ export async function enforceQuota(params: {
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
+  }
+}
+
+// Reserve quota for a task (called pre-run). Stores a reservation so we can refund if task cancelled.
+export async function reserveQuota(params: {
+  taskId: string;
+  userId: string;
+  month: string;
+  tokens: number;
+  usd: number;
+}): Promise<boolean> {
+  await ensureSchema();
+  const client = getPool();
+  if (!client) {
+    // in-memory: create a simple reservation map
+    const key = `res:${params.taskId}`;
+    // store in memoryUsage for simplicity by decrementing later
+    memoryUsage.set(key, { tokensUsed: params.tokens, usdUsed: params.usd });
+    return true;
+  }
+
+  try {
+    await client.query(
+      `INSERT INTO quota_reservations (task_id, user_id, month, tokens_reserved, usd_reserved) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (task_id) DO UPDATE SET tokens_reserved = EXCLUDED.tokens_reserved, usd_reserved = EXCLUDED.usd_reserved, refunded = FALSE, consumed = FALSE, created_at = NOW()`,
+      [params.taskId, params.userId, params.month, params.tokens, params.usd]
+    );
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function consumeReservation(taskId: string): Promise<boolean> {
+  const client = getPool();
+  if (!client) return true;
+  try {
+    await client.query(`UPDATE quota_reservations SET consumed = TRUE, consumed_at = NOW() WHERE task_id = $1`, [taskId]);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function refundReservation(taskId: string): Promise<boolean> {
+  await ensureSchema();
+  const client = getPool();
+  if (!client) {
+    const key = `res:${taskId}`;
+    if (memoryUsage.has(key)) {
+      memoryUsage.delete(key);
+      return true;
+    }
+    return false;
+  }
+
+  const tx = await client.query('BEGIN');
+  try {
+    const res = await client.query('SELECT * FROM quota_reservations WHERE task_id = $1 FOR UPDATE', [taskId]);
+    const row = res.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+
+    if (row.refunded) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+
+    // Decrement user_usage and daily
+    const tokens = Number(row.tokens_reserved || 0);
+    const usd = Number(row.usd_reserved || 0);
+    await client.query(
+      `UPDATE user_usage SET tokens_used = GREATEST(tokens_used - $1,0), usd_used = GREATEST(usd_used - $2,0), updated_at = NOW() WHERE user_id = $3 AND month = $4`,
+      [tokens, usd, row.user_id, row.month]
+    );
+    await client.query(
+      `UPDATE user_usage_daily SET tokens_used = GREATEST(tokens_used - $1,0), usd_used = GREATEST(usd_used - $2,0), updated_at = NOW() WHERE user_id = $3 AND day = $4`,
+      [tokens, usd, row.user_id, row.month + '-01']
+    );
+
+    await client.query(`UPDATE quota_reservations SET refunded = TRUE, refunded_at = NOW() WHERE task_id = $1`, [taskId]);
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return false;
   }
 }
 

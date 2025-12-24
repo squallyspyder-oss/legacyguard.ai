@@ -15,6 +15,7 @@ import { runOperator } from '../src/agents/operator';
 import { runExecutor } from '../src/agents/executor';
 import { runReviewer } from '../src/agents/reviewer';
 import { createOrchestrator, OrchestrationState } from '../src/agents/orchestrator';
+import { consumeReservation, refundReservation } from '../src/lib/quotas';
 
 // Stream para resultados (feedback loop)
 const RESULTS_STREAM = 'agent-results';
@@ -171,6 +172,15 @@ async function main() {
 
             // Publicar resultado
             await publishResult(id, { role: data.role, outcome, elapsed });
+
+            // If this was an orchestration, mark reservation consumed
+            if (data.role === 'orchestrate') {
+              try {
+                await consumeReservation(data.taskId || id);
+              } catch (err) {
+                console.warn('Failed to consume reservation', err);
+              }
+            }
           } catch (err: any) {
             const errorMsg = err.message || String(err);
             console.error(`❌ Tarefa falhou:`, errorMsg);
@@ -194,6 +204,14 @@ async function main() {
                 dlq: true,
                 finalAttempt: retryResult.attempt,
               });
+              // If orchestration moved to DLQ, refund reservation
+              if (data.role === 'orchestrate') {
+                try {
+                  await refundReservation(data.taskId || id);
+                } catch (err) {
+                  console.warn('Failed to refund reservation', err);
+                }
+              }
             }
           }
 
