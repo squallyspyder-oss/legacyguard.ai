@@ -8,6 +8,7 @@ type ChatOutput = {
   reply: string;
   suggestOrchestrate: boolean;
   costTier: 'cheap' | 'deep';
+  modelUsed: string;
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -67,6 +68,7 @@ export async function runChat(input: {
     reply,
     suggestOrchestrate: needsAction,
     costTier: input.deep ? 'deep' : 'cheap',
+    modelUsed: model,
     usage: usageInfo,
   };
 }

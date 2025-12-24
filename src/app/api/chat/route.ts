@@ -3,6 +3,7 @@ import { runChat } from '@/agents/chat';
 import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '@/lib/rate-limit';
 import { chatRequestSchema, validateRequest, validationErrorResponse } from '@/lib/schemas';
 import { requirePermission } from '@/lib/rbac';
+import { enforceQuota, getCurrentMonth } from '@/lib/quotas';
 
 export async function POST(req: NextRequest) {
   // Rate limiting (standard for chat)
@@ -17,6 +18,9 @@ export async function POST(req: NextRequest) {
     return auth.response;
   }
 
+  const userId = auth.user?.email || auth.user?.id || 'anonymous';
+  const month = getCurrentMonth();
+
   try {
     const body = await req.json();
 
@@ -30,6 +34,31 @@ export async function POST(req: NextRequest) {
     const repoPath = (context as any)?.repoPath as string | undefined;
 
     const result = await runChat({ message, deep: deep || false, repoPath });
+
+    // Quota enforcement after actual usage is known
+    if (result.usage) {
+      const quota = await enforceQuota({
+        userId,
+        role: auth.role,
+        month,
+        promptTokens: result.usage.promptTokens,
+        completionTokens: result.usage.completionTokens,
+        model: result.modelUsed,
+      });
+
+      if (!quota.allowed) {
+        return NextResponse.json(
+          {
+            error: 'Quota exceeded',
+            reason: quota.reason,
+            tokensUsed: quota.tokensUsed,
+            tokensLimit: quota.tokensLimit,
+            plan: quota.planId,
+          },
+          { status: 402 }
+        );
+      }
+    }
 
     return NextResponse.json({
       reply: result.reply,

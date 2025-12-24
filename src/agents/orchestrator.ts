@@ -13,7 +13,7 @@ import { analyzeImpact } from '../lib/impact';
 import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle, markMitigation, recordRegression } from '../lib/metrics';
 import { logEvent } from '../lib/audit';
-import { runSandbox, SandboxResult } from '../lib/sandbox';
+import { runSandbox, SandboxResult, getSandboxCapabilities } from '../lib/sandbox';
 
 const execFileAsync = promisify(execFile);
 
@@ -27,6 +27,12 @@ type SandboxConfig = {
   failMode?: 'fail' | 'warn'; // fail = abort executor; warn = log and continuar
   languageHint?: string; // opcional para escolher preset
   onLog?: (message: string) => void;
+  isolationProfile?: 'strict' | 'permissive';
+  networkPolicy?: 'none' | 'bridge';
+  fsPolicy?: 'readonly' | 'readwrite';
+  memoryLimit?: string;
+  cpuLimit?: string;
+  tmpfsSizeMb?: number;
 };
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'awaiting-approval';
@@ -484,6 +490,13 @@ export class Orchestrator {
 
   private async runSandboxIfEnabled(task: SubTask): Promise<SandboxResult | null> {
     const sandbox = this.taskContext.sandbox as SandboxConfig | undefined;
+    const riskLevel = this.state?.plan.riskLevel || 'medium';
+    const requiresSandbox = riskLevel === 'high' || riskLevel === 'critical';
+
+    if (!sandbox?.enabled && requiresSandbox) {
+      throw new Error('Sandbox obrigatório para tasks de risco alto/crítico');
+    }
+
     if (!sandbox?.enabled) return null;
 
     const repoPath = sandbox.repoPath || this.taskContext.repoPath;
@@ -499,6 +512,14 @@ export class Orchestrator {
       this.log(msg);
       if ((sandbox.failMode || 'fail') === 'fail') throw new Error(msg);
       return null;
+    }
+
+    // Para risco alto/crítico, exigir Docker; sem Docker aborta
+    if (requiresSandbox) {
+      const caps = await getSandboxCapabilities();
+      if (!caps.docker) {
+        throw new Error('Sandbox Docker indisponível; não é seguro executar tasks de risco alto/crítico sem isolamento');
+      }
     }
 
     const harness = sandbox.harnessCommands;
@@ -523,6 +544,12 @@ export class Orchestrator {
       timeoutMs,
       failMode: failMode as any,
       languageHint: sandbox.languageHint,
+      isolationProfile: sandbox.isolationProfile || (requiresSandbox ? 'strict' : 'permissive'),
+      networkPolicy: sandbox.networkPolicy,
+      fsPolicy: sandbox.fsPolicy,
+      memoryLimit: sandbox.memoryLimit,
+      cpuLimit: sandbox.cpuLimit,
+      tmpfsSizeMb: sandbox.tmpfsSizeMb,
       onLog: (m) => this.log(m),
     });
 

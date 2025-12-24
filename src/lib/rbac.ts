@@ -107,7 +107,10 @@ export function getPermissions(role: Role): Permission[] {
 // Middleware helper for route protection
 export async function requirePermission(
   permission: Permission
-): Promise<{ authorized: true; role: Role } | { authorized: false; response: NextResponse }> {
+): Promise<
+  | { authorized: true; role: Role; user?: { email?: string | null; name?: string | null; id?: string | null } }
+  | { authorized: false; response: NextResponse }
+> {
   try {
     const session = await getServerSession();
     const role = getUserRole(session);
@@ -127,7 +130,15 @@ export async function requirePermission(
       };
     }
 
-    return { authorized: true, role };
+    return {
+      authorized: true,
+      role,
+      user: {
+        email: session?.user?.email ?? null,
+        name: session?.user?.name ?? null,
+        id: (session as any)?.user?.id ?? null,
+      },
+    };
   } catch {
     return {
       authorized: false,

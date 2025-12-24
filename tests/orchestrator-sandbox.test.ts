@@ -53,4 +53,46 @@ describe('orchestrator sandbox/safe mode', () => {
     }
     expect(failed).toBe(false);
   });
+
+  it('exige sandbox habilitado para risco alto/crítico', async () => {
+    const orch = new Orchestrator();
+    (orch as any).state = { plan: { riskLevel: 'high' }, logs: [] };
+    orch.setContext({ repoPath: process.cwd(), sandbox: { enabled: false } });
+
+    let failed = false;
+    try {
+      await orch['runSandboxIfEnabled']({ id: 't1', agent: 'executor', description: '', dependencies: [], priority: 'high' } as any);
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+  });
+
+  it('falha se risco alto/crítico e Docker indisponível', async () => {
+    const orch = new Orchestrator();
+    (orch as any).state = { plan: { riskLevel: 'critical' }, logs: [] };
+    orch.setContext({
+      repoPath: process.cwd(),
+      sandbox: { enabled: true, command: 'echo oi', failMode: 'fail' },
+    });
+
+    // Mock capabilities to simulate no Docker
+    const sandboxLib = await import('../src/lib/sandbox');
+    const spy = (sandboxLib as any).getSandboxCapabilities
+      ? vi.spyOn(sandboxLib as any, 'getSandboxCapabilities')
+      : null;
+    if (spy) {
+      spy.mockResolvedValue({ docker: false, shell: true, recommended: 'shell' });
+    }
+
+    let failed = false;
+    try {
+      await orch['runSandboxIfEnabled']({ id: 't2', agent: 'executor', description: '', dependencies: [], priority: 'high' } as any);
+    } catch {
+      failed = true;
+    }
+
+    if (spy) spy.mockRestore();
+    expect(failed).toBe(true);
+  });
 });
