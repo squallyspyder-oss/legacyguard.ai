@@ -3,12 +3,6 @@
   "builds": [
     { "src": "next.config.ts", "use": "@vercel/next" }
   ],
-  "functions": {
-    "api/**": {
-      "memory": 1024,
-      "maxDuration": 60
-    }
-  },
   "env": {
     "OPENAI_API_KEY": "@OPENAI_API_KEY",
     "NEXTAUTH_SECRET": "@NEXTAUTH_SECRET",
