@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: legacyguard-web
+    env: node
+    branch: main
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    plan: starter
+
+  - type: background
+    name: legacyguard-worker
+    env: docker
+    branch: main
+    region: oregon
+    dockerfilePath: Dockerfile.worker
+    plan: starter
+
+databases:
+  - name: legacyguard-postgres
+    plan: starter
+    region: oregon
+
+# Note: For pgvector you may prefer to provision Neon/Supabase and set PGVECTOR_URL
