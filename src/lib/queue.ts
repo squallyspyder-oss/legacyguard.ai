@@ -148,7 +148,7 @@ export async function sendToDLQ(
 
   const id = await enqueueTask(DLQ_STREAM, dlqEntry);
   console.error(`💀 Task sent to DLQ after ${finalAttempt} attempts: ${error}`);
-  return id;
+  return String(id);
 }
 
 /** Read pending (unacknowledged) messages for recovery */
