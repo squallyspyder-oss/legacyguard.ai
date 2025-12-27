@@ -540,6 +540,26 @@ export class Orchestrator {
 
     const harness = sandbox.harnessCommands;
     const commands = sandbox.commands;
+    // Normalize commands which may come as HarnessSuggestion[] (from twin.harness.commands)
+    const normalizeArr = (arr: any[] | undefined): string[] | undefined => {
+      if (!arr) return undefined;
+      if (arr.length === 0) return [];
+      if (arr.every((v) => typeof v === 'string')) return arr as string[];
+      if (arr.every((v) => v && typeof v.command === 'string')) return arr.map((v) => v.command as string);
+      return arr.map((v) => String(v));
+    };
+
+    const normalizedCommands = normalizeArr(commands as any[] | undefined);
+    let normalizedHarness: HarnessCommands | undefined = undefined;
+    if (harness) {
+      normalizedHarness = {
+        run: normalizeArr((harness as any).run) || [],
+        setup: normalizeArr((harness as any).setup) || [],
+        teardown: normalizeArr((harness as any).teardown) || [],
+        env: (harness as any).env,
+        workdir: (harness as any).workdir,
+      };
+    }
     const command = sandbox.command || this.autoDetectSandboxCommand(repoPath, sandbox.languageHint);
     const timeoutMs = sandbox.timeoutMs ?? 15 * 60 * 1000;
     const failMode = (task as any).sandboxPhase === 'pre' ? 'warn' : sandbox.failMode || 'fail';
@@ -554,8 +574,8 @@ export class Orchestrator {
     const result = await runSandbox({
       enabled: true,
       repoPath,
-      harnessCommands: harness,
-      commands,
+      harnessCommands: normalizedHarness,
+      commands: normalizedCommands,
       command,
       timeoutMs,
       failMode: failMode as any,
