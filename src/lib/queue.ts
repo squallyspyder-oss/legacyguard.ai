@@ -25,7 +25,34 @@ export const DLQ_STREAM = 'agents-dlq';
 
 export function connectRedis(url?: string) {
   if (redisClient) return redisClient;
-  redisClient = new Redis(url || process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+
+  // sanitize incoming URL: remove surrounding quotes, whitespace, newlines
+  // and normalize `redis:/` -> `redis://` so we don't accidentally connect to a unix socket
+  let redisUrl = (url || process.env.REDIS_URL || 'redis://127.0.0.1:6379') as string;
+  try {
+    redisUrl = redisUrl.trim();
+    // remove surrounding quotes if present
+    if ((redisUrl.startsWith('"') && redisUrl.endsWith('"')) || (redisUrl.startsWith("'") && redisUrl.endsWith("'"))) {
+      redisUrl = redisUrl.slice(1, -1);
+    }
+    // remove any leftover whitespace/newline characters
+    redisUrl = redisUrl.replace(/\s+/g, '');
+    // fix single slash forms like "redis:/host:port" -> "redis://host:port"
+    if (redisUrl.startsWith('redis:/') && !redisUrl.startsWith('redis://')) {
+      redisUrl = redisUrl.replace('redis:/', 'redis://');
+    }
+  } catch (e) {
+    console.warn('[REDIS] Failed to sanitize REDIS_URL, using raw value');
+  }
+
+  try {
+    redisClient = new Redis(redisUrl);
+  } catch (err) {
+    console.error('[REDIS] Failed to create Redis client', err);
+    throw err;
+  }
+
+  // Always listen for errors to avoid unhandled error events
   redisClient.on('error', (err) => console.error('Redis error', err));
   return redisClient;
 }
