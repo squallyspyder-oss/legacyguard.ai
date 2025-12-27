@@ -111,7 +111,7 @@ export async function runExecutor(task: ExecutorInput): Promise<ExecutorOutput> 
   // Buscar informações da PR
   let prData: any;
   try {
-    const prResponse = await octo.pulls.get({ owner, repo, pull_number: prNumber });
+    const prResponse = await octo.rest.pulls.get({ owner, repo, pull_number: prNumber });
     prData = prResponse.data;
     validations.prExists = true;
     validations.noConflicts = prData.mergeable === true;
@@ -132,7 +132,7 @@ export async function runExecutor(task: ExecutorInput): Promise<ExecutorOutput> 
 
   // Verificar status dos checks
   try {
-    const checksResponse = await octo.checks.listForRef({
+    const checksResponse = await octo.rest.checks.listForRef({
       owner,
       repo,
       ref: prData.head.sha,
@@ -147,7 +147,7 @@ export async function runExecutor(task: ExecutorInput): Promise<ExecutorOutput> 
 
   // Verificar reviews/aprovações
   try {
-    const reviewsResponse = await octo.pulls.listReviews({
+    const reviewsResponse = await octo.rest.pulls.listReviews({
       owner,
       repo,
       pull_number: prNumber,
@@ -216,7 +216,7 @@ export async function runExecutor(task: ExecutorInput): Promise<ExecutorOutput> 
   // Executar merge
   let mergeCommitSha: string | undefined;
   try {
-    const mergeResponse = await octo.pulls.merge({
+    const mergeResponse = await octo.rest.pulls.merge({
       owner,
       repo,
       pull_number: prNumber,
