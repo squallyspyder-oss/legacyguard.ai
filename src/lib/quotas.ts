@@ -348,6 +348,79 @@ export function tripCircuitFor(ms: number) {
   circuitTrippedUntil = Date.now() + ms;
 }
 
+// Administrative helpers used by admin routes
+export async function adjustUserUsage(params: {
+  userId: string;
+  month: string;
+  tokensDelta?: number;
+  usdDelta?: number;
+  day?: string;
+}): Promise<boolean> {
+  const tokensDelta = params.tokensDelta || 0;
+  const usdDelta = params.usdDelta || 0;
+  await ensureSchema();
+  const client = getPool();
+  if (!client) {
+    const key = monthKey(params.userId, params.month);
+    const prev = memoryUsage.get(key) || { tokensUsed: 0, usdUsed: 0 };
+    memoryUsage.set(key, { tokensUsed: Math.max(0, prev.tokensUsed + tokensDelta), usdUsed: Math.max(0, prev.usdUsed + usdDelta) });
+    if (params.day) {
+      const dayKey = monthKey(params.userId, params.day);
+      const prevd = memoryUsage.get(dayKey) || { tokensUsed: 0, usdUsed: 0 };
+      memoryUsage.set(dayKey, { tokensUsed: Math.max(0, prevd.tokensUsed + tokensDelta), usdUsed: Math.max(0, prevd.usdUsed + usdDelta) });
+    }
+    return true;
+  }
+
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO user_usage (user_id, month, tokens_used, usd_used)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, month) DO UPDATE
+       SET tokens_used = GREATEST(user_usage.tokens_used + $3, 0),
+           usd_used = GREATEST(user_usage.usd_used + $4, 0),
+           updated_at = NOW()`,
+      [params.userId, params.month, tokensDelta, usdDelta]
+    );
+
+    if (params.day) {
+      await client.query(
+        `INSERT INTO user_usage_daily (user_id, day, tokens_used, usd_used)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, day) DO UPDATE
+         SET tokens_used = GREATEST(user_usage_daily.tokens_used + $3, 0),
+             usd_used = GREATEST(user_usage_daily.usd_used + $4, 0),
+             updated_at = NOW()`,
+        [params.userId, params.day, tokensDelta, usdDelta]
+      );
+    }
+
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return false;
+  }
+}
+
+export async function resetCircuit(): Promise<boolean> {
+  // reset in-memory
+  circuitTrippedUntil = 0;
+  const client = getPool();
+  if (!client) return true;
+  try {
+    await client.query(
+      `INSERT INTO circuit_state (id, tripped_until, threshold_usd, paused_ms, updated_at)
+       VALUES (1, NULL, NULL, NULL, NOW())
+       ON CONFLICT (id) DO UPDATE SET tripped_until = NULL, updated_at = NOW()`
+    );
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 export async function getCircuitStatus() {
   const client = getPool();
   if (!client) {
