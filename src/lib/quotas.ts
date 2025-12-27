@@ -169,7 +169,7 @@ export async function enforceQuota(params: {
     const nextTokens = prev.tokensUsed + tokens;
     const allowed = limits.hardCap ? nextTokens <= limits.monthlyTokens : true;
     if (!allowed) {
-      return { allowed: false, reason: 'quota_exceeded', tokensLimit: limits.monthlyTokens, tokensUsed: prev.tokensUsed };
+      return { allowed: false, planId, reason: 'quota_exceeded', tokensLimit: limits.monthlyTokens, tokensUsed: prev.tokensUsed };
     }
     memoryUsage.set(key, { tokensUsed: nextTokens, usdUsed: prev.usdUsed + cost.usd });
     return { allowed: true, planId, tokensUsed: nextTokens, usdUsed: prev.usdUsed + cost.usd };
@@ -194,6 +194,7 @@ export async function enforceQuota(params: {
       await client.query('ROLLBACK');
       return {
         allowed: false,
+        planId,
         reason: 'quota_exceeded',
         tokensUsed: Number(row.tokens_used),
         usdUsed: Number(row.usd_used),
