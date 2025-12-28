@@ -4,8 +4,12 @@ import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { getServerSession } from 'next-auth';
+import { getRAGIndexer, type CodeFile } from '@/lib/rag-indexer';
 
 const execAsync = promisify(exec);
+
+// RAG indexer (pgvector)
+const ragEnabled = !!(process.env.PGVECTOR_URL || process.env.AUDIT_DB_URL) && !!process.env.OPENAI_API_KEY;
 
 const REPOS_DIR = path.join(process.cwd(), '.legacyguard', 'repos');
 
@@ -17,8 +21,8 @@ function ensureReposDir() {
 }
 
 // Collect files for indexing
-function collectFiles(repoPath: string): { path: string; size: number }[] {
-  const files: { path: string; size: number }[] = [];
+function collectFiles(repoPath: string): { path: string; size: number; content?: string }[] {
+  const files: { path: string; size: number; content?: string }[] = [];
   const allowedExts = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.md', '.json', '.yaml', '.yml'];
 
   function walk(dir: string, base = '') {
@@ -36,6 +40,44 @@ function collectFiles(repoPath: string): { path: string; size: number }[] {
             const stat = fs.statSync(full);
             if (stat.size < 100_000) {
               files.push({ path: rel, size: stat.size });
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore permission errors
+    }
+  }
+
+  walk(repoPath);
+  return files;
+}
+
+// Collect files with content for RAG indexing
+function collectFilesWithContent(repoPath: string): CodeFile[] {
+  const files: CodeFile[] = [];
+  const allowedExts = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.rb', '.php', '.c', '.cpp', '.h', '.hpp'];
+
+  function walk(dir: string, base = '') {
+    try {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const rel = path.join(base, entry.name);
+        const full = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          if (['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'venv', '.venv', 'target'].includes(entry.name)) continue;
+          walk(full, rel);
+        } else {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (allowedExts.includes(ext)) {
+            const stat = fs.statSync(full);
+            if (stat.size < 50_000) { // Smaller limit for embedding
+              try {
+                const content = fs.readFileSync(full, 'utf-8');
+                files.push({ path: rel, content });
+              } catch {
+                // skip binary/unreadable files
+              }
             }
           }
         }
@@ -155,6 +197,19 @@ export async function POST(req: NextRequest) {
 
       const indexedFiles = collectFiles(clonePath);
 
+      // RAG indexing (pgvector)
+      let ragStats = null;
+      if (ragEnabled) {
+        try {
+          const ragIndexer = getRAGIndexer();
+          const codeFiles = collectFilesWithContent(clonePath);
+          const repoId = folderName;
+          ragStats = await ragIndexer.indexRepo(repoId, codeFiles);
+        } catch (ragError: any) {
+          console.warn('[index] RAG indexing failed:', ragError.message);
+        }
+      }
+
       return NextResponse.json({
         indexed: true,
         action: 'clone',
@@ -164,6 +219,11 @@ export async function POST(req: NextRequest) {
         fileCount: indexedFiles.length,
         totalSize: indexedFiles.reduce((acc, f) => acc + f.size, 0),
         files: indexedFiles.slice(0, 30).map((f) => f.path),
+        rag: ragStats ? {
+          enabled: true,
+          chunks: ragStats.totalChunks,
+          languages: ragStats.languages,
+        } : { enabled: false },
       });
     }
 
@@ -195,6 +255,19 @@ export async function POST(req: NextRequest) {
 
       const indexedFiles = collectFiles(clonePath);
 
+      // RAG indexing (pgvector)
+      let ragStats = null;
+      if (ragEnabled) {
+        try {
+          const ragIndexer = getRAGIndexer();
+          const codeFiles = collectFilesWithContent(clonePath);
+          const repoId = folderName;
+          ragStats = await ragIndexer.indexRepo(repoId, codeFiles);
+        } catch (ragError: any) {
+          console.warn('[index] RAG indexing failed:', ragError.message);
+        }
+      }
+
       return NextResponse.json({
         indexed: true,
         action: 'index-url',
@@ -205,6 +278,11 @@ export async function POST(req: NextRequest) {
         fileCount: indexedFiles.length,
         totalSize: indexedFiles.reduce((acc, f) => acc + f.size, 0),
         files: indexedFiles.slice(0, 30).map((f) => f.path),
+        rag: ragStats ? {
+          enabled: true,
+          chunks: ragStats.totalChunks,
+          languages: ragStats.languages,
+        } : { enabled: false },
       });
     }
 
