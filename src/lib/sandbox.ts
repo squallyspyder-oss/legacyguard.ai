@@ -351,19 +351,19 @@ async function runShellSandbox(config: SandboxConfig): Promise<SandboxResult> {
       proc.kill('SIGKILL');
     }, config.timeoutMs || 300000);
 
-    proc.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       const str = data.toString();
       stdout += str;
       log(`[Sandbox/Shell] ${str.trim()}`);
     });
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const str = data.toString();
       stderr += str;
       log(`[Sandbox/Shell] [stderr] ${str.trim()}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       clearTimeout(timeout);
       resolve({
         success: code === 0,
@@ -376,7 +376,7 @@ async function runShellSandbox(config: SandboxConfig): Promise<SandboxResult> {
       });
     });
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: Error) => {
       clearTimeout(timeout);
       resolve({
         success: false,
@@ -423,19 +423,19 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
       proc.kill('SIGKILL');
     }, config.timeoutMs || 300000);
 
-    proc.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       const str = data.toString();
       stdout += str;
       log(`[Sandbox/Native] ${str.trim()}`);
     });
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const str = data.toString();
       stderr += str;
       log(`[Sandbox/Native] [stderr] ${str.trim()}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       clearTimeout(timeout);
       resolve({
         success: code === 0,
@@ -448,7 +448,7 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
       });
     });
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: Error) => {
       clearTimeout(timeout);
       resolve({
         success: false,
