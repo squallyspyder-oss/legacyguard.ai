@@ -283,7 +283,7 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
       log(`[Sandbox/Docker] [stderr] ${str.trim()}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       clearTimeout(timeout);
       const durationMs = Date.now() - startTime;
       
