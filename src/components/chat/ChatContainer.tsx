@@ -46,6 +46,10 @@ interface ChatContainerProps {
   assistActive: boolean
   onAssistToggle: (active: boolean) => void
   onAssistAction: (step: string) => void
+  // Quick action from sidebar
+  quickAgentRole?: string | null
+  quickPrompt?: string | null
+  onQuickActionConsumed?: () => void
 }
 
 export default function ChatContainer({
@@ -58,6 +62,9 @@ export default function ChatContainer({
   assistActive,
   onAssistToggle,
   onAssistAction,
+  quickAgentRole,
+  quickPrompt,
+  onQuickActionConsumed,
 }: ChatContainerProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
@@ -68,6 +75,34 @@ export default function ChatContainer({
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const hasMessages = messages.length > 0
+
+  // Smart Agent Router - detecta intenção e sugere/seleciona agente
+  const routeToAgent = useCallback((message: string): string => {
+    const t = message.toLowerCase()
+    // Incidentes/erros -> orquestrar com Twin Builder
+    if (/incidente|erro|bug|falha|crash|exception|stacktrace/.test(t)) return 'orchestrate'
+    // Ações de código -> operador ou orquestrador
+    if (/patch|fix|corrigir|refatorar|aplicar|criar pr|pull request|branch/.test(t)) return 'orchestrate'
+    // Deploy/merge -> executor (via orquestrador)
+    if (/deploy|merge|publicar|release/.test(t)) return 'orchestrate'
+    // Revisão/compliance -> reviewer
+    if (/revisar|review|compliance|gdpr|soc2|segurança|vulnerabilidade/.test(t)) return 'reviewer'
+    // Análise simples -> advisor
+    if (/analisar|analise|explicar|entender|como funciona/.test(t)) return 'advisor'
+    // Default -> chat
+    return 'chat'
+  }, [])
+
+  // Effect para processar quick actions da sidebar
+  useEffect(() => {
+    if (quickAgentRole) {
+      setAgentRole(quickAgentRole)
+      if (quickPrompt) {
+        setInput(quickPrompt)
+      }
+      onQuickActionConsumed?.()
+    }
+  }, [quickAgentRole, quickPrompt, onQuickActionConsumed])
 
   // Compute inline suggestions based on input
   const suggestions = useMemo(() => {
@@ -128,6 +163,11 @@ export default function ChatContainer({
     if (isLoading || (!input.trim() && uploadedFiles.length === 0)) return
 
     const userText = input.trim() || "Analise os arquivos enviados."
+    
+    // Smart routing: se estiver no chat e detectar ação complexa, sugerir mudança
+    const suggestedAgent = routeToAgent(userText)
+    const shouldSuggestSwitch = agentRole === 'chat' && suggestedAgent !== 'chat'
+    
     const userMessage: Message = {
       id: `msg-${Date.now()}`,
       role: "user",
@@ -175,13 +215,20 @@ export default function ChatContainer({
         }
         
         const data = await res.json()
+        
+        // Auto-sugestão: se detectou ação e backend também sugere, adicionar CTA
+        const showAgentSuggestion = shouldSuggestSwitch || data.suggestOrchestrate
+        const suggestContent = showAgentSuggestion 
+          ? `\n\n---\n💡 **Detectei que você quer executar uma ação.** [Clique aqui para usar o Orquestrador](#switch-orchestrate) e automatizar o processo.`
+          : ''
+        
         const assistantMessage: Message = {
           id: `msg-${Date.now() + 1}`,
           role: "assistant",
-          content: data.reply || "Sem resposta do servidor.",
+          content: (data.reply || "Sem resposta do servidor.") + suggestContent,
           timestamp: new Date(),
           agentRole,
-          suggestOrchestrateText: data.suggestOrchestrate ? userText : undefined,
+          suggestOrchestrateText: showAgentSuggestion ? userText : undefined,
         }
         setMessages((prev) => [...prev, assistantMessage])
         setIsLoading(false)
@@ -209,8 +256,8 @@ export default function ChatContainer({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             role: "orchestrate",
-            message: userText,
-            sandbox: settings.sandboxEnabled ? { mode: settings.sandboxMode } : undefined,
+            request: userText, // API espera 'request', não 'message'
+            sandbox: settings.sandboxEnabled ? { enabled: true, mode: settings.sandboxMode } : undefined,
             safeMode: settings.safeMode,
           }),
         })
@@ -235,7 +282,56 @@ export default function ChatContainer({
         return
       }
 
-      // Other agent modes - call /api/agent with FormData
+      // Agent modes that go through worker queue (advisor, reviewer, operator, executor)
+      const agentModesThroughQueue = ['advisor', 'reviewer', 'operator', 'executor']
+      
+      if (agentModesThroughQueue.includes(agentRole)) {
+        // Esses agentes rodam via worker - usar /api/agents
+        if (!settings.workerEnabled) {
+          const assistantMessage: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: "assistant",
+            content: `⚠️ **Worker desativado.** Ative o Worker nas configurações para usar o modo ${agentRole}.`,
+            timestamp: new Date(),
+            agentRole,
+          }
+          setMessages((prev) => [...prev, assistantMessage])
+          setIsLoading(false)
+          return
+        }
+
+        const res = await fetch("/api/agents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: agentRole,
+            payload: { 
+              request: userText,
+              context: {} 
+            },
+          }),
+        })
+
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({ error: "Erro no servidor" }))
+          throw new Error(error.error || `Erro ao executar ${agentRole}`)
+        }
+
+        const data = await res.json()
+        const assistantMessage: Message = {
+          id: `msg-${Date.now() + 1}`,
+          role: "assistant",
+          content: data.reply || `🚀 **${agentRole}** iniciado\n\nID: \`${data.taskId || "pending"}\`\n\nAcompanhe o progresso em tempo real.`,
+          timestamp: new Date(),
+          agentRole,
+        }
+        setMessages((prev) => [...prev, assistantMessage])
+        setIsLoading(false)
+        setUploadedFiles([])
+        return
+      }
+
+      // Legacy modes (legacyAssist) - call /api/agent with FormData for static analysis
       const formData = new FormData()
       formData.append("message", userText)
       formData.append("role", agentRole)
@@ -346,7 +442,14 @@ export default function ChatContainer({
           {/* Messages area */}
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-3xl mx-auto px-4 py-6">
-              <MessageList messages={messages} isLoading={isLoading} />
+              <MessageList 
+                messages={messages} 
+                isLoading={isLoading} 
+                onSwitchAgent={(agent, prompt) => {
+                  setAgentRole(agent)
+                  if (prompt) setInput(prompt)
+                }}
+              />
               <div ref={messagesEndRef} />
             </div>
           </div>

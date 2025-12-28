@@ -65,6 +65,26 @@ export default function MainLayout() {
   const [assistActive, setAssistActive] = useState(false)
   const [assistStep, setAssistStep] = useState<string | null>(null)
 
+  // Quick action from sidebar -> ChatContainer
+  const [quickAgentRole, setQuickAgentRole] = useState<string | null>(null)
+  const [quickPrompt, setQuickPrompt] = useState<string | null>(null)
+
+  // Handler for sidebar quick actions
+  const handleQuickAction = useCallback((action: string) => {
+    // action pode ser: agentRole (orchestrate, chat, etc) ou prompt completo
+    const agentKeys = ['legacyAssist', 'chat', 'orchestrate', 'advisor', 'operator', 'reviewer', 'executor']
+    if (agentKeys.includes(action)) {
+      setQuickAgentRole(action)
+      setQuickPrompt(null)
+    } else {
+      // É um prompt - usar orchestrate para ações complexas
+      setQuickPrompt(action)
+      setQuickAgentRole('orchestrate')
+    }
+    // Fechar sidebar em mobile
+    if (isMobile) setSidebarOpen(false)
+  }, [isMobile])
+
   // Onboarding
   const onboarding = useOnboarding(session?.user?.email ? `lg:${session.user.email}` : "lg:anon")
 
@@ -178,6 +198,7 @@ export default function MainLayout() {
         onOpenSettings={() => setSettingsOpen(true)}
         onStartTour={onboarding.startTour}
         settings={settings}
+        onQuickAction={handleQuickAction}
       />
 
       {/* Mobile overlay */}
@@ -200,6 +221,9 @@ export default function MainLayout() {
           assistActive={assistActive}
           onAssistToggle={setAssistActive}
           onAssistAction={handleAssistAction}
+          quickAgentRole={quickAgentRole}
+          quickPrompt={quickPrompt}
+          onQuickActionConsumed={() => { setQuickAgentRole(null); setQuickPrompt(null); }}
         />
       </main>
 
