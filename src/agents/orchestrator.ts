@@ -12,27 +12,9 @@ import { analyzeImpact } from '../lib/impact';
 import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle, markMitigation, recordRegression } from '../lib/metrics';
 import { logEvent } from '../lib/audit';
-import { runSandbox, SandboxResult, getSandboxCapabilities } from '../lib/sandbox';
+import { runSandbox, SandboxResult, getSandboxCapabilities, SandboxConfig, HarnessCommands } from '../lib/sandbox';
 
 // execFile usage removed to avoid bundling native child_process in serverless/runtime
-
-type SandboxConfig = {
-  enabled?: boolean;
-  repoPath?: string;
-  command?: string;
-  commands?: Array<{ name: string; command: string; notes?: string }>; // Harness commands from Twin
-  runnerPath?: string;
-  timeoutMs?: number;
-  failMode?: 'fail' | 'warn'; // fail = abort executor; warn = log and continuar
-  languageHint?: string; // opcional para escolher preset
-  onLog?: (message: string) => void;
-  isolationProfile?: 'strict' | 'permissive';
-  networkPolicy?: 'none' | 'bridge';
-  fsPolicy?: 'readonly' | 'readwrite';
-  memoryLimit?: string;
-  cpuLimit?: string;
-  tmpfsSizeMb?: number;
-};
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'awaiting-approval';
 
