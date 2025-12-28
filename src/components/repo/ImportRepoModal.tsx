@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { type ChangeEvent, useCallback, useEffect, useMemo, useState } from "react"
 import { 
   X, 
   GitBranch, 
@@ -12,8 +12,10 @@ import {
   CheckCircle2, 
   AlertCircle,
   ExternalLink,
-  Terminal
+  Terminal,
+  RefreshCw
 } from "lucide-react"
+import { signIn, useSession } from "next-auth/react"
 
 interface ImportRepoModalProps {
   isOpen: boolean
@@ -30,13 +32,28 @@ export interface RepoInfo {
   indexed?: boolean
 }
 
-type ImportMode = "git" | "url" | "local"
+type ImportMode = "git" | "url" | "local" | "github"
 type ImportStatus = "idle" | "loading" | "success" | "error"
 
+type GithubRepo = {
+  id: number
+  name: string
+  fullName: string
+  private: boolean
+  defaultBranch: string
+  htmlUrl: string
+  cloneUrl: string
+  owner?: string
+}
+
 export default function ImportRepoModal({ isOpen, onClose, onImportComplete }: ImportRepoModalProps) {
+  const { data: session, status: sessionStatus } = useSession()
   const [mode, setMode] = useState<ImportMode>("url")
   const [status, setStatus] = useState<ImportStatus>("idle")
   const [error, setError] = useState<string | null>(null)
+  const [ghRepos, setGhRepos] = useState<GithubRepo[]>([])
+  const [ghLoading, setGhLoading] = useState(false)
+  const [ghSearch, setGhSearch] = useState("")
   
   // Git clone fields
   const [gitUrl, setGitUrl] = useState("")
@@ -59,6 +76,8 @@ export default function ImportRepoModal({ isOpen, onClose, onImportComplete }: I
     setRepoUrl("")
     setLocalFiles([])
     setLocalPath("")
+    setGhRepos([])
+    setGhSearch("")
   }
 
   const handleClose = () => {
@@ -256,16 +275,94 @@ export default function ImportRepoModal({ isOpen, onClose, onImportComplete }: I
       case "local":
         handleLocalUpload()
         break
+      case "github":
+        // handled via button per repo
+        break
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const loadGithubRepos = useCallback(async () => {
+    setGhLoading(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/github/repos")
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Falha ao listar repositórios")
+      }
+      const data = await res.json()
+      setGhRepos(data.repos || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido")
+    } finally {
+      setGhLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (mode === "github" && sessionStatus === "authenticated" && ghRepos.length === 0 && !ghLoading) {
+      loadGithubRepos()
+    }
+  }, [mode, sessionStatus, ghRepos.length, ghLoading, loadGithubRepos])
+
+  const filteredRepos = useMemo(() => {
+    if (!ghSearch.trim()) return ghRepos
+    const q = ghSearch.toLowerCase()
+    return ghRepos.filter((r) => r.fullName.toLowerCase().includes(q))
+  }, [ghRepos, ghSearch])
+
+  const handleGithubClone = async (repo: GithubRepo) => {
+    setStatus("loading")
+    setError(null)
+    try {
+      const res = await fetch("/api/index", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "clone-github",
+          owner: repo.owner || repo.fullName.split("/")[0],
+          repo: repo.name,
+          branch: repo.defaultBranch,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Erro ao clonar repositório do GitHub")
+      }
+
+      const data = await res.json()
+      setStatus("success")
+
+      onImportComplete?.({
+        type: "git",
+        name: repo.fullName,
+        url: repo.htmlUrl,
+        branch: repo.defaultBranch,
+        path: data.path,
+        indexed: data.indexed,
+      })
+
+      setTimeout(handleClose, 1500)
+    } catch (err) {
+      setStatus("error")
+      setError(err instanceof Error ? err.message : "Erro desconhecido")
+    }
+  }
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       setLocalFiles(Array.from(e.target.files))
     }
   }
 
   const modes = [
+    {
+      id: "github" as const,
+      icon: <Github className="w-5 h-5" />, 
+      label: "GitHub",
+      description: "Repos conectados",
+    },
     { 
       id: "url" as const, 
       icon: <Link className="w-5 h-5" />, 
@@ -388,6 +485,78 @@ export default function ImportRepoModal({ isOpen, onClose, onImportComplete }: I
                   <ExternalLink className="w-3 h-3" />
                   <span>Suporta GitHub e GitLab públicos</span>
                 </div>
+              </div>
+            )}
+
+            {/* GitHub connected mode */}
+            {mode === "github" && status !== "success" && (
+              <div className="space-y-4">
+                {sessionStatus !== "authenticated" && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Conecte-se com GitHub para listar seus repositórios e importar sem informar URL.
+                    </p>
+                    <button
+                      onClick={() => signIn("github")}
+                      className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-primary text-primary-foreground hover:opacity-90"
+                    >
+                      <Github className="w-5 h-5" />
+                      <span>Conectar GitHub</span>
+                    </button>
+                  </div>
+                )}
+
+                {sessionStatus === "authenticated" && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 justify-between">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Github className="w-4 h-4" />
+                        <span>Repositórios</span>
+                        {ghLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                      </div>
+                      <button
+                        onClick={loadGithubRepos}
+                        disabled={ghLoading}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm border border-border hover:border-primary/40 disabled:opacity-50"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Atualizar
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={ghSearch}
+                      onChange={(e) => setGhSearch(e.target.value)}
+                      placeholder="Buscar..."
+                      className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-sm"
+                    />
+                    <div className="max-h-64 overflow-y-auto space-y-2">
+                      {ghLoading && <p className="text-sm text-muted-foreground">Carregando repositórios...</p>}
+                      {!ghLoading && filteredRepos.length === 0 && (
+                        <p className="text-sm text-muted-foreground">Nenhum repositório encontrado.</p>
+                      )}
+                      {!ghLoading && filteredRepos.map((repo) => (
+                        <div
+                          key={repo.id}
+                          className="flex items-center justify-between p-3 rounded-lg border border-border hover:border-primary/40 transition"
+                        >
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-medium text-sm">{repo.fullName}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {repo.private ? "Privado" : "Público"} • Branch: {repo.defaultBranch}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleGithubClone(repo)}
+                            disabled={status === "loading"}
+                            className="px-3 py-1.5 rounded-lg text-sm bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                          >
+                            Importar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

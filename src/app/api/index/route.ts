@@ -163,7 +163,7 @@ export async function POST(req: NextRequest) {
     const body: IndexRequest = await req.json().catch(() => ({}));
     const action = body.action || 'index-local';
 
-    // Git Clone
+    // Git Clone (public / generic)
     if (action === 'clone') {
       const gitUrl = body.gitUrl;
       const branch = body.branch || 'main';
@@ -215,6 +215,71 @@ export async function POST(req: NextRequest) {
         action: 'clone',
         path: clonePath,
         gitUrl,
+        branch,
+        fileCount: indexedFiles.length,
+        totalSize: indexedFiles.reduce((acc, f) => acc + f.size, 0),
+        files: indexedFiles.slice(0, 30).map((f) => f.path),
+        rag: ragStats ? {
+          enabled: true,
+          chunks: ragStats.totalChunks,
+          languages: ragStats.languages,
+        } : { enabled: false },
+      });
+    }
+
+    // GitHub clone using authenticated session (lists come from /api/github/repos)
+    if (action === 'clone-github') {
+      const session = await getServerSession();
+      // @ts-ignore
+      const accessToken = session?.accessToken as string | undefined;
+      if (!accessToken) {
+        return NextResponse.json({ error: 'Não autenticado no GitHub' }, { status: 401 });
+      }
+
+      const owner = body.owner as string | undefined;
+      const repo = body.repo as string | undefined;
+      const branch = body.branch || 'main';
+
+      if (!owner || !repo) {
+        return NextResponse.json({ error: 'owner e repo são obrigatórios' }, { status: 400 });
+      }
+
+      const repoName = `${owner}-${repo}`;
+      const folderName = generateRepoFolderName(repoName);
+      const clonePath = path.join(REPOS_DIR, folderName);
+
+      const gitUrl = `https://x-access-token:${accessToken}@github.com/${owner}/${repo}.git`;
+
+      try {
+        await execAsync(`git clone --depth 1 --branch ${branch} "${gitUrl}" "${clonePath}"`, {
+          timeout: 120000,
+        });
+      } catch (cloneError: any) {
+        return NextResponse.json({
+          error: cloneError?.message || 'Erro ao clonar repositório privado',
+        }, { status: 500 });
+      }
+
+      const indexedFiles = collectFiles(clonePath);
+
+      let ragStats = null;
+      if (ragEnabled) {
+        try {
+          const ragIndexer = getRAGIndexer();
+          const codeFiles = collectFilesWithContent(clonePath);
+          const repoId = folderName;
+          ragStats = await ragIndexer.indexRepo(repoId, codeFiles);
+        } catch (ragError: any) {
+          console.warn('[index] RAG indexing failed:', ragError.message);
+        }
+      }
+
+      return NextResponse.json({
+        indexed: true,
+        action: 'clone-github',
+        path: clonePath,
+        owner,
+        repo,
         branch,
         fileCount: indexedFiles.length,
         totalSize: indexedFiles.reduce((acc, f) => acc + f.size, 0),
