@@ -2,9 +2,10 @@
 
 import type React from "react"
 
-import { useState } from "react"
-import { X, Shield, Zap, Database, DollarSign, Info, Check } from "lucide-react"
+import { useState, useEffect } from "react"
+import { X, Shield, Zap, Database, DollarSign, Info, Check, User, Bell, Keyboard, Settings2, Moon, Sun, Monitor } from "lucide-react"
 import type { AppSettings } from "../layout/MainLayout"
+import type { UserSettings } from "../../app/api/user/settings/route"
 
 interface SettingsPanelProps {
   isOpen: boolean
@@ -13,18 +14,91 @@ interface SettingsPanelProps {
   onUpdateSettings: (updates: Partial<AppSettings>) => void
 }
 
-type SettingsTab = "security" | "infrastructure" | "cost" | "data"
+type SettingsTab = "profile" | "security" | "infrastructure" | "cost" | "data"
+
+// Default user settings for initial state
+const defaultUserSettings: UserSettings = {
+  displayName: '',
+  email: '',
+  avatarUrl: undefined,
+  timezone: 'America/Sao_Paulo',
+  language: 'pt-BR',
+  theme: 'dark',
+  compactMode: false,
+  showTimestamps: true,
+  soundEnabled: false,
+  emailNotifications: true,
+  desktopNotifications: true,
+  notifyOnComplete: true,
+  notifyOnError: true,
+  dailyDigest: false,
+  defaultAgent: 'orchestrate',
+  autoSuggestAgents: true,
+  showAgentThinking: true,
+  streamResponses: true,
+  shareAnalytics: false,
+  saveHistory: true,
+  historyRetentionDays: 30,
+  shortcuts: {
+    newChat: 'Ctrl+N',
+    toggleSidebar: 'Ctrl+B',
+    openSettings: 'Ctrl+,',
+    focusInput: '/',
+  },
+  developerMode: false,
+  verboseLogs: false,
+  experimentalFeatures: false,
+}
 
 export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSettings }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("security")
+  const [activeTab, setActiveTab] = useState<SettingsTab>("profile")
+  const [userSettings, setUserSettings] = useState<UserSettings>(defaultUserSettings)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Load user settings on mount
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/user/settings')
+        .then(res => res.json())
+        .then(data => {
+          if (data.settings) {
+            setUserSettings(data.settings)
+            setIsAuthenticated(data.authenticated)
+          }
+        })
+        .catch(console.error)
+    }
+  }, [isOpen])
+
+  const updateUserSettings = async (updates: Partial<UserSettings>) => {
+    const newSettings = { ...userSettings, ...updates }
+    setUserSettings(newSettings)
+    
+    if (isAuthenticated) {
+      setIsSaving(true)
+      try {
+        await fetch('/api/user/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ settings: newSettings })
+        })
+      } catch (error) {
+        console.error('Failed to save user settings:', error)
+      } finally {
+        setIsSaving(false)
+      }
+    }
+  }
 
   if (!isOpen) return null
 
   const tabs = [
+    { id: "profile" as const, label: "Perfil", icon: <User className="w-4 h-4" /> },
     { id: "security" as const, label: "Seguranca", icon: <Shield className="w-4 h-4" /> },
-    { id: "infrastructure" as const, label: "Infraestrutura", icon: <Zap className="w-4 h-4" /> },
+    { id: "infrastructure" as const, label: "Infra", icon: <Zap className="w-4 h-4" /> },
     { id: "cost" as const, label: "Custos", icon: <DollarSign className="w-4 h-4" /> },
-    { id: "data" as const, label: "Dados & RAG", icon: <Database className="w-4 h-4" /> },
+    { id: "data" as const, label: "Dados", icon: <Database className="w-4 h-4" /> },
   ]
 
   return (
@@ -65,6 +139,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {activeTab === "profile" && <ProfileSettings settings={userSettings} onUpdate={updateUserSettings} isAuthenticated={isAuthenticated} />}
           {activeTab === "security" && <SecuritySettings settings={settings} onUpdate={onUpdateSettings} />}
           {activeTab === "infrastructure" && <InfrastructureSettings settings={settings} onUpdate={onUpdateSettings} />}
           {activeTab === "cost" && <CostSettings settings={settings} onUpdate={onUpdateSettings} />}
@@ -75,8 +150,17 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
         <div className="border-t border-border px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Info className="w-4 h-4" />
-              <span>Alteracoes aplicadas automaticamente</span>
+              {isSaving ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span>Salvando...</span>
+                </>
+              ) : (
+                <>
+                  <Info className="w-4 h-4" />
+                  <span>Alteracoes aplicadas automaticamente</span>
+                </>
+              )}
             </div>
             <button onClick={onClose} className="px-4 py-2 rounded-lg btn-primary text-sm font-medium">
               Concluido
@@ -87,6 +171,287 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     </>
   )
 }
+
+// ============================================
+// PROFILE SETTINGS (User Personal Settings)
+// ============================================
+
+function ProfileSettings({
+  settings,
+  onUpdate,
+  isAuthenticated,
+}: {
+  settings: UserSettings
+  onUpdate: (updates: Partial<UserSettings>) => void
+  isAuthenticated: boolean
+}) {
+  const themeOptions = [
+    { value: 'light', label: 'Claro', icon: <Sun className="w-4 h-4" /> },
+    { value: 'dark', label: 'Escuro', icon: <Moon className="w-4 h-4" /> },
+    { value: 'system', label: 'Sistema', icon: <Monitor className="w-4 h-4" /> },
+  ]
+
+  const agents = [
+    { value: 'orchestrate', label: 'Orquestrador' },
+    { value: 'advisor', label: 'Conselheiro' },
+    { value: 'planner', label: 'Planejador' },
+    { value: 'executor', label: 'Executor' },
+    { value: 'reviewer', label: 'Revisor' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      {/* Authentication Warning */}
+      {!isAuthenticated && (
+        <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30">
+          <div className="flex items-center gap-3 mb-2">
+            <Info className="w-5 h-5 text-yellow-500" />
+            <span className="font-semibold text-yellow-500">Nao Autenticado</span>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Faca login para salvar suas preferencias. Configuracoes atuais sao temporarias.
+          </p>
+        </div>
+      )}
+
+      {/* Profile Info */}
+      <SettingsSection title="Informacoes do Perfil">
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden">
+              {settings.avatarUrl ? (
+                <img src={settings.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-8 h-8 text-primary" />
+              )}
+            </div>
+            <div className="flex-1">
+              <input
+                type="text"
+                value={settings.displayName}
+                onChange={(e) => onUpdate({ displayName: e.target.value })}
+                placeholder="Seu nome"
+                className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="text-xs text-muted-foreground mt-1">{settings.email || 'Email nao disponivel'}</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm text-muted-foreground mb-1 block">Fuso Horario</label>
+              <select
+                value={settings.timezone}
+                onChange={(e) => onUpdate({ timezone: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="America/Sao_Paulo">Sao Paulo (GMT-3)</option>
+                <option value="America/New_York">New York (GMT-5)</option>
+                <option value="Europe/London">London (GMT+0)</option>
+                <option value="Asia/Tokyo">Tokyo (GMT+9)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground mb-1 block">Idioma</label>
+              <select
+                value={settings.language}
+                onChange={(e) => onUpdate({ language: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="pt-BR">Portugues (BR)</option>
+                <option value="en-US">English (US)</option>
+                <option value="es-ES">Espanol</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </SettingsSection>
+
+      {/* Theme */}
+      <SettingsSection title="Aparencia">
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm text-muted-foreground mb-2 block">Tema</label>
+            <div className="flex gap-2">
+              {themeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => onUpdate({ theme: option.value as 'light' | 'dark' | 'system' })}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition-colors ${
+                    settings.theme === option.value
+                      ? 'bg-primary/20 border-primary text-primary'
+                      : 'bg-secondary border-border hover:border-primary/50'
+                  }`}
+                >
+                  {option.icon}
+                  <span className="text-sm">{option.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <ToggleRow
+            label="Modo Compacto"
+            description="Reduz espacamento para exibir mais conteudo"
+            checked={settings.compactMode}
+            onChange={(v) => onUpdate({ compactMode: v })}
+          />
+          <ToggleRow
+            label="Mostrar Timestamps"
+            description="Exibe horario nas mensagens do chat"
+            checked={settings.showTimestamps}
+            onChange={(v) => onUpdate({ showTimestamps: v })}
+          />
+          <ToggleRow
+            label="Sons"
+            description="Reproduz sons para notificacoes"
+            checked={settings.soundEnabled}
+            onChange={(v) => onUpdate({ soundEnabled: v })}
+          />
+        </div>
+      </SettingsSection>
+
+      {/* Notifications */}
+      <SettingsSection title="Notificacoes">
+        <ToggleRow
+          label="Notificacoes por Email"
+          description="Receba atualizacoes importantes por email"
+          checked={settings.emailNotifications}
+          onChange={(v) => onUpdate({ emailNotifications: v })}
+        />
+        <ToggleRow
+          label="Notificacoes Desktop"
+          description="Notificacoes do navegador quando em background"
+          checked={settings.desktopNotifications}
+          onChange={(v) => onUpdate({ desktopNotifications: v })}
+        />
+        <ToggleRow
+          label="Notificar ao Concluir"
+          description="Avisa quando tarefas longas terminam"
+          checked={settings.notifyOnComplete}
+          onChange={(v) => onUpdate({ notifyOnComplete: v })}
+        />
+        <ToggleRow
+          label="Notificar Erros"
+          description="Alertas imediatos sobre falhas"
+          checked={settings.notifyOnError}
+          onChange={(v) => onUpdate({ notifyOnError: v })}
+        />
+        <ToggleRow
+          label="Resumo Diario"
+          description="Receba um resumo diario de atividades"
+          checked={settings.dailyDigest}
+          onChange={(v) => onUpdate({ dailyDigest: v })}
+        />
+      </SettingsSection>
+
+      {/* Agent Preferences */}
+      <SettingsSection title="Preferencias de Agentes">
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm text-muted-foreground mb-2 block">Agente Padrao</label>
+            <select
+              value={settings.defaultAgent}
+              onChange={(e) => onUpdate({ defaultAgent: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              {agents.map((agent) => (
+                <option key={agent.value} value={agent.value}>{agent.label}</option>
+              ))}
+            </select>
+          </div>
+          
+          <ToggleRow
+            label="Sugestoes de Agentes"
+            description="Sugere automaticamente o melhor agente"
+            checked={settings.autoSuggestAgents}
+            onChange={(v) => onUpdate({ autoSuggestAgents: v })}
+          />
+          <ToggleRow
+            label="Mostrar Raciocinio"
+            description="Exibe o processo de pensamento do agente"
+            checked={settings.showAgentThinking}
+            onChange={(v) => onUpdate({ showAgentThinking: v })}
+          />
+          <ToggleRow
+            label="Streaming de Respostas"
+            description="Mostra respostas em tempo real"
+            checked={settings.streamResponses}
+            onChange={(v) => onUpdate({ streamResponses: v })}
+          />
+        </div>
+      </SettingsSection>
+
+      {/* Privacy */}
+      <SettingsSection title="Privacidade">
+        <ToggleRow
+          label="Compartilhar Analytics"
+          description="Ajuda a melhorar o produto (anonimo)"
+          checked={settings.shareAnalytics}
+          onChange={(v) => onUpdate({ shareAnalytics: v })}
+        />
+        <ToggleRow
+          label="Salvar Historico"
+          description="Mantem historico de conversas"
+          checked={settings.saveHistory}
+          onChange={(v) => onUpdate({ saveHistory: v })}
+        />
+        {settings.saveHistory && (
+          <SliderRow
+            label="Retencao de Historico"
+            description="Dias para manter o historico"
+            value={settings.historyRetentionDays}
+            min={7}
+            max={365}
+            step={7}
+            unit=" dias"
+            onChange={(v) => onUpdate({ historyRetentionDays: v })}
+          />
+        )}
+      </SettingsSection>
+
+      {/* Shortcuts */}
+      <SettingsSection title="Atalhos de Teclado">
+        <div className="space-y-3">
+          <ShortcutRow label="Novo Chat" shortcut={settings.shortcuts.newChat} />
+          <ShortcutRow label="Alternar Sidebar" shortcut={settings.shortcuts.toggleSidebar} />
+          <ShortcutRow label="Abrir Configuracoes" shortcut={settings.shortcuts.openSettings} />
+          <ShortcutRow label="Focar Input" shortcut={settings.shortcuts.focusInput} />
+        </div>
+      </SettingsSection>
+
+      {/* Advanced */}
+      <SettingsSection title="Avancado">
+        <ToggleRow
+          label="Modo Desenvolvedor"
+          description="Habilita ferramentas de debug"
+          checked={settings.developerMode}
+          onChange={(v) => onUpdate({ developerMode: v })}
+        />
+        {settings.developerMode && (
+          <>
+            <ToggleRow
+              label="Logs Detalhados"
+              description="Exibe logs verbose no console"
+              checked={settings.verboseLogs}
+              onChange={(v) => onUpdate({ verboseLogs: v })}
+            />
+            <ToggleRow
+              label="Recursos Experimentais"
+              description="Habilita features em beta (instavel)"
+              checked={settings.experimentalFeatures}
+              onChange={(v) => onUpdate({ experimentalFeatures: v })}
+            />
+          </>
+        )}
+      </SettingsSection>
+    </div>
+  )
+}
+
+// ============================================
+// SECURITY SETTINGS (Platform)
+// ============================================
 
 function SecuritySettings({
   settings,
@@ -365,26 +730,34 @@ function ToggleRow({
 
 function SliderRow({
   label,
+  description,
   value,
   onChange,
   min,
   max,
   step,
   display,
+  unit,
 }: {
   label: string
+  description?: string
   value: number
   onChange: (value: number) => void
   min: number
   max: number
   step: number
-  display: string
+  display?: string
+  unit?: string
 }) {
+  const displayValue = display || `${value}${unit || ''}`
   return (
     <div className="p-4 rounded-xl bg-secondary/50 border border-border">
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-medium">{label}</span>
-        <span className="text-sm text-primary font-semibold">{display}</span>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <span className="font-medium">{label}</span>
+          {description && <p className="text-sm text-muted-foreground mt-0.5">{description}</p>}
+        </div>
+        <span className="text-sm text-primary font-semibold">{displayValue}</span>
       </div>
       <input
         type="range"
@@ -395,6 +768,17 @@ function SliderRow({
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-primary"
       />
+    </div>
+  )
+}
+
+function ShortcutRow({ label, shortcut }: { label: string; shortcut: string }) {
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-border">
+      <span className="text-sm">{label}</span>
+      <kbd className="px-2 py-1 rounded bg-muted text-xs font-mono text-muted-foreground border border-border">
+        {shortcut}
+      </kbd>
     </div>
   )
 }
