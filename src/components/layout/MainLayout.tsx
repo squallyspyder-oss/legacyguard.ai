@@ -93,17 +93,15 @@ export default function MainLayout() {
           const data = await res.json()
           if (Array.isArray(data.sessions)) {
             setSessions(data.sessions)
+            setSessionsLoading(false)
             return
           }
         }
       } catch {
-        // Use mock data as fallback
+        // Network error - continue with empty sessions
       }
-      setSessions([
-        { id: "1", title: "Refactor auth module", tag: "seguranca", recency: "Hoje", risk: "medio" },
-        { id: "2", title: "CI/CD hardening", tag: "devops", recency: "Ontem", risk: "baixo" },
-        { id: "3", title: "Incident analysis", tag: "auditoria", recency: "2 dias", risk: "alto" },
-      ])
+      // No sessions found or API error - start fresh
+      setSessions([])
       setSessionsLoading(false)
     }
     loadSessions()

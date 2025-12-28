@@ -431,8 +431,5 @@ Seja profissional e priorize segurança.`
   }
 }
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// No App Router, body parsing is handled automatically by NextRequest
+// The old Pages Router config export is not needed

@@ -27,6 +27,9 @@ export const DLQ_STREAM = 'agents-dlq';
 export function connectRedis(url?: string) {
   if (redisClient) return redisClient;
   const target = url || getRedisUrl();
+  if (!target) {
+    throw new Error('Redis URL não configurado. Defina REDIS_URL ou REDIS_TLS_URL.');
+  }
   redisClient = new Redis(target);
   redisClient.on('error', (err) => console.error('Redis error', err));
   return redisClient;
