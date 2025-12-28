@@ -154,13 +154,9 @@ export class Orchestrator {
           this.log(`   🔧 Harness: ${twinResult.harness.commands.length} comandos sugeridos`);
           // Enriquecer sandbox config com harness commands
           if (this.taskContext.sandbox) {
-            this.taskContext.sandbox.commands = twinResult.harness.commands;
+            this.taskContext.sandbox.commands = twinResult.harness.commands.map(c => c.command);
             this.taskContext.sandbox.harnessCommands = {
-              run: twinResult.harness.commands,
-              setup: twinResult.harness.setup || [],
-              teardown: twinResult.harness.teardown || [],
-              env: twinResult.harness.env,
-              workdir: twinResult.harness.workdir,
+              run: twinResult.harness.commands.map(c => c.command),
             };
           }
         }
