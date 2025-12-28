@@ -99,7 +99,7 @@ function generateRepoFolderName(name: string): string {
 }
 
 type IndexRequest = {
-  action?: 'clone' | 'index-url' | 'index-local' | 'upload';
+  action?: 'clone' | 'clone-github' | 'index-url' | 'index-local' | 'upload';
   // For clone
   gitUrl?: string;
   branch?: string;
