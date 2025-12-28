@@ -191,7 +191,6 @@ export class Orchestrator {
       request,
       context: context?.summary,
       repoInfo: context?.repoInfo,
-      twinContext: twinResult, // Passa contexto do twin para o planner
     });
 
     // Guardrail adicional: se risco vier alto/crítico, exigir aprovação mesmo que o planner não marque
