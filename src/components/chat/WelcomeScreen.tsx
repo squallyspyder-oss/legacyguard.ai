@@ -108,7 +108,7 @@ export default function WelcomeScreen({
         </div>
 
         {/* Input area with floating suggestions */}
-        <div className="relative animate-fade-in-up" style={{ animationDelay: "100ms" }}>
+        <div className="relative animate-fade-in-up">
           <FloatingSuggestions
             suggestions={suggestions}
             visible={showSuggestions}
@@ -131,7 +131,7 @@ export default function WelcomeScreen({
         </div>
 
         {/* Quick actions */}
-        <div className="animate-fade-in-up" style={{ animationDelay: "200ms" }}>
+        <div className="animate-fade-in-up">
           <p className="text-xs text-muted-foreground text-center mb-4 uppercase tracking-wider font-medium">
             Acoes rapidas
           </p>
@@ -161,7 +161,6 @@ export default function WelcomeScreen({
         {/* Features */}
         <div
           className="flex items-center justify-center gap-6 text-xs text-muted-foreground animate-fade-in-up"
-          style={{ animationDelay: "300ms" }}
         >
           <div className="flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5 text-primary" />
@@ -265,8 +264,7 @@ function InteractiveLogo() {
       {/* Sparkle effects */}
       <Sparkles className="absolute -top-2 -right-2 w-5 h-5 text-primary/60 animate-pulse" />
       <Sparkles
-        className="absolute -bottom-1 -left-1 w-4 h-4 text-primary/40 animate-pulse"
-        style={{ animationDelay: "500ms" }}
+        className="absolute -bottom-1 -left-1 w-4 h-4 text-primary/40 animate-pulse animate-delay-500"
       />
     </div>
   )

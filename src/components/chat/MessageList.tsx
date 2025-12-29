@@ -54,7 +54,7 @@ function MessageBubble({ message, index, onSwitchAgent }: { message: Message; in
   }
 
   return (
-    <div className="flex gap-4 animate-fade-in-up group" style={{ animationDelay: `${Math.min(index * 50, 200)}ms` }}>
+    <div className="flex gap-4 animate-fade-in-up group">
       {/* Avatar */}
       <div
         className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${

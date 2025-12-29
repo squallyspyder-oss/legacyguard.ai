@@ -124,9 +124,11 @@ export default function OnboardingTour({ isOpen, onClose, onComplete }: Onboardi
       <div className="relative w-full max-w-2xl bg-slate-900 rounded-2xl shadow-2xl border border-white/10 overflow-hidden">
         {/* Progress bar */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-white/10">
-          <div 
-            className="h-full bg-emerald-500 transition-all duration-300"
-            style={{ width: `${progress}%` }}
+          <progress
+            className="lg-progress lg-progress-emerald"
+            max={100}
+            value={progress}
+            aria-label="Progresso do tour"
           />
         </div>
 
@@ -147,6 +149,7 @@ export default function OnboardingTour({ isOpen, onClose, onComplete }: Onboardi
             <button 
               onClick={handleSkip}
               className="text-2xl text-slate-400 hover:text-white transition-colors"
+              aria-label="Pular tour"
             >
               ×
             </button>
@@ -227,6 +230,7 @@ export default function OnboardingTour({ isOpen, onClose, onComplete }: Onboardi
                       ? "bg-emerald-500/50" 
                       : "bg-white/20"
                 }`}
+                aria-label={`Ir para passo ${idx + 1}`}
               />
             ))}
           </div>

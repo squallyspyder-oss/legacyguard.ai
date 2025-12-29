@@ -6,63 +6,99 @@
 /* LegacyGuard Brand Colors - Professional Dark Theme */
 :root {
   /* Core brand - Deep navy/slate */
+  --background: #0f1424;
   --background: oklch(0.12 0.02 265);
+  --foreground: #f7f8ff;
   --foreground: oklch(0.95 0.01 260);
 
   /* Surfaces */
+  --card: #131a2e;
   --card: oklch(0.15 0.018 265);
+  --card-foreground: #f7f8ff;
   --card-foreground: oklch(0.95 0.01 260);
+  --popover: #11182b;
   --popover: oklch(0.13 0.018 265);
+  --popover-foreground: #f7f8ff;
   --popover-foreground: oklch(0.95 0.01 260);
 
   /* Brand accent - Emerald/Teal */
+  --primary: #4fd1c5;
   --primary: oklch(0.72 0.17 165);
+  --primary-foreground: #0f172a;
   --primary-foreground: oklch(0.12 0.02 265);
 
   /* Secondary */
+  --secondary: #1e2236;
   --secondary: oklch(0.2 0.018 265);
+  --secondary-foreground: #e5e7ff;
   --secondary-foreground: oklch(0.9 0.01 260);
 
   /* Muted */
+  --muted: #1b1f33;
   --muted: oklch(0.18 0.015 265);
+  --muted-foreground: #c7d2fe;
   --muted-foreground: oklch(0.6 0.02 260);
 
   /* Accent */
+  --accent: #1e2236;
   --accent: oklch(0.2 0.018 265);
+  --accent-foreground: #f7f8ff;
   --accent-foreground: oklch(0.95 0.01 260);
 
   /* Destructive */
+  --destructive: #ea580c;
   --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: #f7f8ff;
   --destructive-foreground: oklch(0.95 0.01 260);
 
   /* Warning */
+  --warning: #fbbf24;
   --warning: oklch(0.75 0.15 75);
+  --warning-foreground: #1c2135;
   --warning-foreground: oklch(0.15 0.02 265);
 
   /* Success */
+  --success: #34d399;
   --success: oklch(0.72 0.17 145);
+  --success-foreground: #1c2135;
   --success-foreground: oklch(0.15 0.02 265);
 
   /* Borders & inputs */
+  --border: #2b304a;
   --border: oklch(0.25 0.018 265);
+  --input: #1f2437;
   --input: oklch(0.18 0.018 265);
+  --ring: #4fd1c5;
   --ring: oklch(0.72 0.17 165);
 
   /* Sidebar */
+  --sidebar: #0d111d;
   --sidebar: oklch(0.1 0.018 265);
+  --sidebar-foreground: #e5e7ff;
   --sidebar-foreground: oklch(0.9 0.01 260);
+  --sidebar-primary: #4fd1c5;
   --sidebar-primary: oklch(0.72 0.17 165);
+  --sidebar-primary-foreground: #0f172a;
   --sidebar-primary-foreground: oklch(0.12 0.02 265);
+  --sidebar-accent: #151a2b;
   --sidebar-accent: oklch(0.16 0.018 265);
+  --sidebar-accent-foreground: #f7f8ff;
   --sidebar-accent-foreground: oklch(0.95 0.01 260);
+  --sidebar-border: #1e2236;
   --sidebar-border: oklch(0.2 0.018 265);
+  --sidebar-ring: #4fd1c5;
   --sidebar-ring: oklch(0.72 0.17 165);
 
   /* Chart colors */
+  --chart-1: #4fd1c5;
   --chart-1: oklch(0.72 0.17 165);
+  --chart-2: #5fb0f0;
   --chart-2: oklch(0.68 0.15 200);
+  --chart-3: #fbbf24;
   --chart-3: oklch(0.75 0.15 75);
+  --chart-4: #a78bfa;
   --chart-4: oklch(0.65 0.18 280);
+  --chart-5: #f472b6;
   --chart-5: oklch(0.6 0.2 330);
 
   --radius: 0.75rem;
@@ -132,16 +168,19 @@
 }
 
 ::-webkit-scrollbar-thumb {
+  background: #2b304a;
   background: oklch(0.3 0.02 265);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  background: #373d5d;
   background: oklch(0.4 0.02 265);
 }
 
 /* Selection */
 ::selection {
+  background: rgba(79, 209, 197, 0.3);
   background: oklch(0.72 0.17 165 / 0.3);
   color: var(--foreground);
 }
@@ -170,9 +209,11 @@
 @keyframes logo-glow {
   0%,
   100% {
+    filter: drop-shadow(0 0 20px rgba(79, 209, 197, 0.4));
     filter: drop-shadow(0 0 20px oklch(0.72 0.17 165 / 0.4));
   }
   50% {
+    filter: drop-shadow(0 0 40px rgba(79, 209, 197, 0.7));
     filter: drop-shadow(0 0 40px oklch(0.72 0.17 165 / 0.7));
   }
 }
@@ -303,6 +344,23 @@
   animation: logo-float 4s ease-in-out infinite;
 }
 
+/* LegacyAssist spotlight effect */
+.lg-spotlight {
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.7), 0 0 40px rgba(16, 185, 129, 0.3);
+  animation: spotlight 0.4s ease-out forwards;
+}
+
+@keyframes spotlight {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .animate-logo-pulse {
   animation: logo-pulse 3s ease-in-out infinite;
 }
@@ -336,6 +394,7 @@
 }
 
 .animate-shimmer {
+  background: linear-gradient(90deg, #1e2236 0%, #2b304a 50%, #1e2236 100%);
   background: linear-gradient(90deg, oklch(0.2 0.018 265) 0%, oklch(0.3 0.02 265) 50%, oklch(0.2 0.018 265) 100%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
@@ -366,6 +425,7 @@
 
 /* Gradient text */
 .gradient-text {
+  background: linear-gradient(135deg, #4fd1c5, #5fb0f0);
   background: linear-gradient(135deg, oklch(0.72 0.17 165), oklch(0.68 0.15 200));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -373,6 +433,7 @@
 }
 
 .gradient-text-warm {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
   background: linear-gradient(135deg, oklch(0.75 0.15 75), oklch(0.7 0.18 45));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -403,18 +464,21 @@
 }
 
 .status-online {
+  background: #34d399;
   background: oklch(0.72 0.17 145);
-  box-shadow: 0 0 8px oklch(0.72 0.17 145 / 0.5);
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.5);
 }
 
 .status-offline {
+  background: #ea580c;
   background: oklch(0.55 0.22 25);
-  box-shadow: 0 0 8px oklch(0.55 0.22 25 / 0.5);
+  box-shadow: 0 0 8px rgba(234, 88, 12, 0.5);
 }
 
 .status-warning {
+  background: #fbbf24;
   background: oklch(0.75 0.15 75);
-  box-shadow: 0 0 8px oklch(0.75 0.15 75 / 0.5);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
 }
 
 /* Badge styles - using standard CSS instead of @apply with custom classes */
@@ -428,46 +492,52 @@
 }
 
 .badge-primary {
+  background: rgba(79, 209, 197, 0.15);
   background: oklch(0.72 0.17 165 / 0.15);
-  color: oklch(0.72 0.17 165);
-  border: 1px solid oklch(0.72 0.17 165 / 0.3);
+  color: #4fd1c5;
+  border: 1px solid rgba(79, 209, 197, 0.3);
 }
 
 .badge-success {
+  background: rgba(52, 211, 153, 0.15);
   background: oklch(0.72 0.17 145 / 0.15);
-  color: oklch(0.72 0.17 145);
-  border: 1px solid oklch(0.72 0.17 145 / 0.3);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
 }
 
 .badge-warning {
+  background: rgba(251, 191, 36, 0.15);
   background: oklch(0.75 0.15 75 / 0.15);
-  color: oklch(0.75 0.15 75);
-  border: 1px solid oklch(0.75 0.15 75 / 0.3);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
 }
 
 .badge-destructive {
+  background: rgba(234, 88, 12, 0.15);
   background: oklch(0.55 0.22 25 / 0.15);
-  color: oklch(0.55 0.22 25);
-  border: 1px solid oklch(0.55 0.22 25 / 0.3);
+  color: #ea580c;
+  border: 1px solid rgba(234, 88, 12, 0.3);
 }
 
 .badge-muted {
+  background: #1f2437;
   background: oklch(0.18 0.015 265);
-  color: oklch(0.6 0.02 260);
-  border: 1px solid oklch(0.25 0.018 265);
+  color: #c7d2fe;
+  border: 1px solid #2b304a;
 }
 
 /* Button styles - using standard CSS */
 .btn-primary {
+  background: #4fd1c5;
   background: oklch(0.72 0.17 165);
-  color: oklch(0.12 0.02 265);
+  color: #111827;
   font-weight: 500;
   transition: all 0.2s;
-  box-shadow: 0 0 20px oklch(0.72 0.17 165 / 0.25);
+  box-shadow: 0 0 20px rgba(79, 209, 197, 0.25);
 }
 
 .btn-primary:hover {
-  box-shadow: 0 0 30px oklch(0.72 0.17 165 / 0.45);
+  box-shadow: 0 0 30px rgba(79, 209, 197, 0.45);
   transform: translateY(-1px);
 }
 
@@ -476,22 +546,66 @@
 }
 
 .btn-secondary {
+  background: #1e2236;
   background: oklch(0.2 0.018 265);
-  color: oklch(0.9 0.01 260);
+  color: #e5e7ff;
   font-weight: 500;
   transition: all 0.2s;
 }
 
 .btn-secondary:hover {
+  background: rgba(30, 34, 54, 0.8);
   background: oklch(0.2 0.018 265 / 0.8);
 }
 
 .btn-ghost {
-  color: oklch(0.6 0.02 260);
+  color: #c7d2fe;
   transition: all 0.2s;
 }
 
 .btn-ghost:hover {
-  color: oklch(0.95 0.01 260);
+  color: #f3f4ff;
+  background: rgba(30, 34, 54, 0.5);
   background: oklch(0.2 0.018 265 / 0.5);
+}
+
+/* Progress utility */
+.lg-progress {
+  --progress-fill: #4fd1c5;
+  --progress-fill: oklch(0.72 0.17 165);
+  --progress-track: #1b1f33;
+  --progress-track: oklch(0.18 0.015 265);
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: var(--progress-track);
+}
+
+.lg-progress::-webkit-progress-bar {
+  background: var(--progress-track);
+  border-radius: 9999px;
+}
+
+.lg-progress::-webkit-progress-value {
+  background: var(--progress-fill);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+
+.lg-progress::-moz-progress-bar {
+  background: var(--progress-fill);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+
+.lg-progress-emerald {
+  --progress-fill: #10b981;
+  --progress-fill: oklch(0.71 0.17 153);
+}
+
+/* Animation timing helper */
+.animate-delay-500 {
+  animation-delay: 500ms;
 }

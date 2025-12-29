@@ -344,7 +344,14 @@ export function createRAGIndexer(): RAGIndexer {
     async deleteRepo(repoId: string): Promise<void> {
       const client = getPool();
       await client.query('DELETE FROM code_chunks WHERE repo_id = $1', [repoId]);
-      await client.query('DELETE FROM doc_chunks WHERE repo_id = $1', [repoId]);
+      try {
+        await client.query('DELETE FROM doc_chunks WHERE repo_id = $1', [repoId]);
+      } catch (err: any) {
+        // Ignore missing table so deleteRepo can run on deployments without doc_chunks
+        if (!err?.code || err.code !== '42P01') {
+          throw err;
+        }
+      }
       await client.query('DELETE FROM indexed_repos WHERE id = $1', [repoId]);
     },
     
@@ -461,11 +468,24 @@ export function createRAGIndexer(): RAGIndexer {
     
     async cleanupCache(daysOld = 7): Promise<number> {
       const client = getPool();
-      const { rows } = await client.query(
-        'SELECT cleanup_query_cache($1) as deleted',
-        [daysOld]
+
+      // Only call helper function when it exists to avoid runtime errors on fresh DBs
+      const { rows: fnRows } = await client.query(
+        "SELECT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'cleanup_query_cache') AS exists"
       );
-      return rows[0]?.deleted || 0;
+      if (!fnRows[0]?.exists) {
+        return 0;
+      }
+
+      try {
+        const { rows } = await client.query(
+          'SELECT cleanup_query_cache($1) as deleted',
+          [daysOld]
+        );
+        return rows[0]?.deleted || 0;
+      } catch {
+        return 0;
+      }
     },
   };
 }

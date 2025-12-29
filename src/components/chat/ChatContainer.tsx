@@ -408,7 +408,11 @@ export default function ChatContainer({
       <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl z-10">
         <div className="flex items-center gap-3">
           {(isMobile || sidebarCollapsed) && (
-            <button onClick={onToggleSidebar} className="p-2 rounded-lg hover:bg-secondary transition-colors">
+            <button
+              onClick={onToggleSidebar}
+              className="p-2 rounded-lg hover:bg-secondary transition-colors"
+              aria-label="Alternar sidebar"
+            >
               <Menu className="w-5 h-5" />
             </button>
           )}
@@ -430,7 +434,11 @@ export default function ChatContainer({
               </span>
             ))}
           </div>
-          <button onClick={onOpenSettings} className="p-2 rounded-lg hover:bg-secondary transition-colors">
+          <button
+            onClick={onOpenSettings}
+            className="p-2 rounded-lg hover:bg-secondary transition-colors"
+            aria-label="Abrir configuracoes"
+          >
             <Settings className="w-5 h-5" />
           </button>
         </div>

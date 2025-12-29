@@ -253,6 +253,7 @@ export default function Sidebar({
                             e.stopPropagation()
                           }}
                           className="p-1 rounded hover:bg-background/50 transition-colors"
+                          aria-label="Mais opcoes da sessao"
                         >
                           <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
                         </button>

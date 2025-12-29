@@ -30,6 +30,7 @@ export default function AuthModal({ isOpen, onClose, mode = "login" }: AuthModal
             <button
               onClick={onClose}
               className="absolute right-4 top-4 p-2 rounded-lg hover:bg-secondary transition-colors"
+              aria-label="Fechar modal de autenticacao"
             >
               <X className="w-5 h-5" />
             </button>

@@ -99,16 +99,12 @@ export default function LegacyAssistOverlay({ step, onClose, onAction }: LegacyA
 
   return (
     <div
-      className={`fixed inset-0 z-[100] pointer-events-none ${isVisible ? "opacity-100" : "opacity-0"} transition-opacity duration-300`}
+      className={`fixed inset-0 z-100 pointer-events-none ${isVisible ? "opacity-100" : "opacity-0"} transition-opacity duration-300`}
     >
       {/* Spotlight effect - points to chat input */}
       <div
-        className="absolute bottom-32 left-1/2 -translate-x-1/2 w-[600px] h-24
-                   rounded-2xl border-2 border-primary/50 pointer-events-none"
-        style={{
-          boxShadow: "0 0 0 9999px rgba(0,0,0,0.7), 0 0 40px rgba(16, 185, 129, 0.3)",
-          animation: "spotlight 0.4s ease-out forwards",
-        }}
+        className="absolute bottom-32 left-1/2 -translate-x-1/2 w-150 h-24
+                   rounded-2xl border-2 border-primary/50 pointer-events-none lg-spotlight"
       />
 
       {/* Tooltip */}
@@ -121,6 +117,7 @@ export default function LegacyAssistOverlay({ step, onClose, onAction }: LegacyA
           <button
             onClick={onClose}
             className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-secondary transition-colors"
+            aria-label="Fechar guia do LegacyAssist"
           >
             <X className="w-4 h-4 text-muted-foreground" />
           </button>

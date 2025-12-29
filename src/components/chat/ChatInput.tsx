@@ -87,11 +87,12 @@ export default function ChatInput({
                        bg-secondary border border-border text-sm group"
             >
               <Paperclip className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="truncate max-w-[150px]">{file.name}</span>
+              <span className="truncate max-w-36">{file.name}</span>
               <button
                 type="button"
                 onClick={() => onRemoveFile(i)}
                 className="text-muted-foreground hover:text-destructive transition-colors"
+                aria-label="Remover arquivo"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -138,11 +139,11 @@ export default function ChatInput({
                             setShowAgentMenu(false)
                           }}
                           className={`w-full text-left px-3 py-3 rounded-lg
-                                    transition-colors ${
-                                      agentRole === role.key
-                                        ? "bg-primary/10 border border-primary/30"
-                                        : "hover:bg-secondary border border-transparent"
-                                    }`}
+                                            transition-colors ${
+                                              agentRole === role.key
+                                                ? "bg-primary/10 border border-primary/30"
+                                                : "hover:bg-secondary border border-transparent"
+                                            }`}
                         >
                           <div className="flex items-center gap-3">
                             <span className={agentRole === role.key ? "text-primary" : "text-muted-foreground"}>
@@ -185,6 +186,7 @@ export default function ChatInput({
               ref={fileInputRef}
               multiple
               className="hidden"
+              aria-label="Selecionar arquivos para upload"
               onChange={(e) => onFileUpload(e.target.files)}
             />
 
@@ -193,8 +195,9 @@ export default function ChatInput({
               onClick={() => fileInputRef.current?.click()}
               className="p-2.5 rounded-xl bg-secondary/50 hover:bg-secondary
                        text-muted-foreground hover:text-foreground
-                       transition-colors flex-shrink-0"
+                       transition-colors shrink-0"
               title="Anexar arquivo"
+              aria-label="Anexar arquivo"
             >
               <Paperclip className="w-5 h-5" />
             </button>
@@ -214,13 +217,7 @@ export default function ChatInput({
                       : "Descreva sua tarefa de seguranca..."
                 }
                 rows={1}
-                className="w-full bg-transparent resize-none text-base
-                         placeholder:text-muted-foreground
-                         focus:outline-none"
-                style={{
-                  minHeight: "28px",
-                  maxHeight: "200px",
-                }}
+                className="w-full resize-none rounded-lg bg-card text-sm text-card-foreground placeholder:text-muted-foreground/70 border border-border/60 p-3 shadow-inner shadow-black/30 focus:ring-2 focus:ring-primary/40 focus:outline-none min-h-7 max-h-50"
                 disabled={isLoading}
               />
             </div>
@@ -229,7 +226,7 @@ export default function ChatInput({
               type="submit"
               disabled={isLoading || (!input.trim() && uploadedFiles.length === 0)}
               className="p-2.5 rounded-xl btn-primary disabled:opacity-50
-                       disabled:cursor-not-allowed disabled:shadow-none flex-shrink-0"
+                       disabled:cursor-not-allowed disabled:shadow-none shrink-0"
             >
               {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
             </button>

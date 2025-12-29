@@ -21,15 +21,19 @@ export default function FloatingSuggestions({ suggestions, visible, onSelect, on
               <Sparkles className="w-3.5 h-3.5 text-primary" />
               <span>Sugestoes</span>
             </div>
-            <button onClick={onDismiss} className="p-1 rounded hover:bg-secondary transition-colors">
+            <button
+              onClick={onDismiss}
+              className="p-1 rounded hover:bg-secondary transition-colors"
+              aria-label="Fechar sugestoes"
+            >
               <X className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {suggestions.map((suggestion, idx) => (
+            {suggestions.map((suggestion) => (
               <button
-                key={idx}
+                key={suggestion}
                 onClick={() => onSelect(suggestion)}
                 className="
                   flex items-center gap-2 px-3 py-2 rounded-lg
@@ -37,7 +41,6 @@ export default function FloatingSuggestions({ suggestions, visible, onSelect, on
                   hover:bg-primary/10 hover:border-primary/30 hover:text-primary
                   text-sm transition-all duration-200 group
                 "
-                style={{ animationDelay: `${idx * 100}ms` }}
               >
                 <span>{suggestion}</span>
                 <ArrowRight className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />

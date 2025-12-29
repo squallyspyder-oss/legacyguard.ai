@@ -5,7 +5,7 @@ import './styles.css';
 export function Account() {
   return (
     <main className="page">
-      <section className="hero" style={{ maxWidth: 720 }}>
+      <section className="hero">
         <p className="eyebrow">Minha conta</p>
         <h1>Configurações e segurança</h1>
         <p className="lede">Gerencie credenciais, sessões, MFA e organizações fornecidas pelo Neon Auth.</p>

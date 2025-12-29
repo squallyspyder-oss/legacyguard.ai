@@ -410,6 +410,7 @@ export default function ImportRepoModal({ isOpen, onClose, onImportComplete }: I
             <button
               onClick={handleClose}
               className="p-2 rounded-lg hover:bg-secondary transition-colors"
+              aria-label="Fechar modal de importacao"
             >
               <X className="w-5 h-5" />
             </button>

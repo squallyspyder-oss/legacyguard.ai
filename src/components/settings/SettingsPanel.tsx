@@ -114,7 +114,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
             <h2 className="text-lg font-bold">Configuracoes</h2>
             <p className="text-sm text-muted-foreground">Governanca, seguranca e controles</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary transition-colors">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary transition-colors" aria-label="Fechar configuracoes">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -162,7 +162,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
                 </>
               )}
             </div>
-            <button onClick={onClose} className="px-4 py-2 rounded-lg btn-primary text-sm font-medium">
+            <button onClick={onClose} className="px-4 py-2 rounded-lg btn-primary text-sm font-medium" aria-label="Fechar painel de configuracoes">
               Concluido
             </button>
           </div>
@@ -239,8 +239,9 @@ function ProfileSettings({
           
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Fuso Horario</label>
+              <label className="text-sm text-muted-foreground mb-1 block" htmlFor="settings-timezone">Fuso Horario</label>
               <select
+                id="settings-timezone"
                 value={settings.timezone}
                 onChange={(e) => onUpdate({ timezone: e.target.value })}
                 className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
@@ -252,8 +253,9 @@ function ProfileSettings({
               </select>
             </div>
             <div>
-              <label className="text-sm text-muted-foreground mb-1 block">Idioma</label>
+              <label className="text-sm text-muted-foreground mb-1 block" htmlFor="settings-language">Idioma</label>
               <select
+                id="settings-language"
                 value={settings.language}
                 onChange={(e) => onUpdate({ language: e.target.value })}
                 className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
@@ -349,8 +351,9 @@ function ProfileSettings({
       <SettingsSection title="Preferencias de Agentes">
         <div className="space-y-4">
           <div>
-            <label className="text-sm text-muted-foreground mb-2 block">Agente Padrao</label>
+            <label className="text-sm text-muted-foreground mb-2 block" htmlFor="settings-default-agent">Agente Padrao</label>
             <select
+              id="settings-default-agent"
               value={settings.defaultAgent}
               onChange={(e) => onUpdate({ defaultAgent: e.target.value })}
               className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
@@ -632,12 +635,12 @@ function CostSettings({
             <span className="text-sm font-medium">Uso hoje</span>
             <span className="text-sm text-primary font-semibold">$4.23 / ${settings.billingCap}</span>
           </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all"
-              style={{ width: `${(4.23 / settings.billingCap) * 100}%` }}
-            />
-          </div>
+          <progress
+            className="lg-progress"
+            max={settings.billingCap}
+            value={4.23}
+            aria-label="Uso de orçamento diário"
+          />
         </div>
       </SettingsSection>
     </div>
@@ -719,6 +722,7 @@ function ToggleRow({
       <button
         onClick={() => onChange(!checked)}
         className={`relative w-11 h-6 rounded-full transition-colors ${checked ? "bg-primary" : "bg-muted"}`}
+        aria-label={label}
       >
         <span
           className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${checked ? "translate-x-5" : ""}`}
@@ -767,6 +771,7 @@ function SliderRow({
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-primary"
+        aria-label={label}
       />
     </div>
   )
