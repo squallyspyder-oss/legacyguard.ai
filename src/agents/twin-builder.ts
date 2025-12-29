@@ -93,10 +93,14 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
 
   try {
     legacyProfile = profileLegacyRepo(repoPath);
+    log(taskId, 'Analyzer legacy-profiler loaded');
     behavior = classifyBehavior(legacyProfile);
+    log(taskId, 'Analyzer behavior-classifier loaded');
     harness = generateHarness(legacyProfile, behavior, incident);
+    log(taskId, 'Analyzer harness-generator loaded');
   } catch (err: unknown) {
     log(taskId, `Analyzer falhou: ${err instanceof Error ? err.message : String(err)}`);
+    throw err instanceof Error ? err : new Error(String(err));
   }
   if (sandbox?.enabled) {
     log(taskId, `Sandbox ligado (runner=${sandbox.runnerPath || 'default'}, mode=${sandbox.failMode || 'fail'})`, 'sandbox');

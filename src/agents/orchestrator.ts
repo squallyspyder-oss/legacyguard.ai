@@ -68,6 +68,7 @@ export class Orchestrator {
 
   constructor(callbacks: OrchestrationCallbacks = {}) {
     this.callbacks = callbacks;
+    console.log('[agent] Agent initialized');
   }
 
   private log(message: string) {
@@ -84,6 +85,7 @@ export class Orchestrator {
 
   async execute(request: string, context?: any): Promise<OrchestrationState> {
     this.log(`Iniciando orquestração para: "${request.slice(0, 100)}..."`);
+    this.log('analysis started');
 
     if (context) {
       this.setContext({ ...context });
@@ -532,6 +534,8 @@ export class Orchestrator {
       memoryLimit: sandbox.memoryLimit,
       cpuLimit: sandbox.cpuLimit,
       tmpfsSizeMb: sandbox.tmpfsSizeMb,
+      useDocker: sandbox.useDocker,
+      runnerPath: sandbox.runnerPath,
       onLog: (m) => this.log(m),
     });
 

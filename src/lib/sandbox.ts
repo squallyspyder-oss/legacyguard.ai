@@ -466,7 +466,14 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
 // Main sandbox runner
 export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> {
   const log = config.onLog || console.log;
-  
+
+  log('[Sandbox] sandbox connected');
+  try {
+    const entries = fs.readdirSync(config.repoPath);
+    log(`[Sandbox] files parsed (${entries.length} entries)`);
+  } catch (err: any) {
+    log(`[Sandbox] files parsed (error reading): ${err?.message || err}`);
+  }
 
   if (!config.enabled) {
     log('[Sandbox] Disabled, skipping');
@@ -501,6 +508,10 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
   if (!result.success && config.failMode === 'warn') {
     log(`[Sandbox] Warning: Test failed but failMode=warn, continuing`);
     result.success = true; // Override for orchestrator
+  }
+
+  if (result.success) {
+    log(`[Sandbox] sandbox exec ok (${result.method})`);
   }
 
   return result;

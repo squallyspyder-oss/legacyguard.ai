@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
     // Usa o código corrigido (fixed) como base
     fs.writeFileSync(filePath, patch.fixed || patch.original || '// Arquivo vazio');
 
+    console.log('[output] resultado gerado - iniciando ZIP');
     // ZIP do projeto corrigido
     const zipPath = path.join(tempDir, 'projeto-corrigido.zip');
     const output = fs.createWriteStream(zipPath);
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
     await archive.finalize();
 
     const zipBuffer = fs.readFileSync(zipPath);
+    console.log('[output] output persisted for download', { zipPath });
 
     return new NextResponse(zipBuffer, {
       headers: {
@@ -39,7 +41,8 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: 'Falha ao gerar ZIP' }, { status: 500 });
+    console.error('[output] Failed to generate ZIP', error);
+    return NextResponse.json({ error: 'Failed to generate ZIP' }, { status: 500 });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

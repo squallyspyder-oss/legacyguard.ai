@@ -4,8 +4,11 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '@/lib/rat
 import { chatRequestSchema, validateRequest, validationErrorResponse } from '@/lib/schemas';
 import { requirePermission } from '@/lib/rbac';
 import { enforceQuota, getCurrentMonth } from '@/lib/quotas';
+import { logBootDiagnostics } from '@/lib/boot';
 
 export async function POST(req: NextRequest) {
+  logBootDiagnostics('chat-route');
+  console.log('[chat] frontend request received');
   // Rate limiting (standard for chat)
   const rateLimitResult = await checkRateLimit(req, { ...RATE_LIMIT_PRESETS.standard, keyPrefix: 'chat' });
   if (!rateLimitResult.allowed) {
@@ -32,7 +35,9 @@ export async function POST(req: NextRequest) {
 
     const { message, deepSearch: deep, context } = validation.data;
     const repoPath = (context as any)?.repoPath as string | undefined;
+    console.log('[chat] chat request received', { userId, deep: !!deep });
 
+    console.log('[chat] agent invoked');
     const result = await runChat({ message, deep: deep || false, repoPath });
 
     // Quota enforcement after actual usage is known
@@ -67,6 +72,7 @@ export async function POST(req: NextRequest) {
       usage: result.usage,
     });
   } catch (err: any) {
+    console.error('[chat] backend error', err);
     return NextResponse.json({ error: err.message || 'Erro no modo chat' }, { status: 500 });
   }
 }

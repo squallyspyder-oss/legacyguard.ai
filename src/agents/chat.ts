@@ -28,6 +28,7 @@ export async function runChat(input: {
   const model = input.deep ? deepModel : cheapModel;
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  console.log('[chat] agent invoked', { deep: !!input.deep });
 
   const system = input.deep
     ? `Você é o modo Chat Livre (profundo) do LegacyGuard. Responda de forma objetiva, traga riscos, opções e próximos passos. Quando perceber intenção de execução (patch, PR, merge, testes, deploy), recomende orquestrar agentes.`
@@ -43,6 +44,7 @@ export async function runChat(input: {
       { role: 'user', content: input.message },
     ];
 
+    console.log('[chat] calling LLM', { model });
     const completion = await openai.chat.completions.create({
       model,
       temperature: input.deep ? 0.35 : 0.5,
@@ -60,8 +62,9 @@ export async function runChat(input: {
       totalTokens,
       usdEstimate: cost.usd,
     };
-  } catch {
-    reply = 'Modo chat indisponível no momento. Verifique a chave OPENAI_API_KEY.';
+  } catch (err: any) {
+    console.error('[chat] LLM error', err);
+    throw new Error(`OpenAI chat failed: ${err?.message || err}`);
   }
 
   return {
