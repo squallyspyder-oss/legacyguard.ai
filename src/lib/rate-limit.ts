@@ -76,13 +76,34 @@ async function checkRateLimitRedis(
   key: string,
   config: RateLimitConfig
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number } | null> {
-  try {
-    const redisUrl = process.env.REDIS_URL;
-    if (!redisUrl) return null;
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) return null;
 
+  try {
     // Dynamic import to avoid issues when Redis not available
     const { default: Redis } = await import('ioredis');
-    const redis = new Redis(redisUrl);
+    
+    // Create connection with timeout
+    const redis = new Redis(redisUrl, {
+      connectTimeout: 3000,
+      commandTimeout: 3000,
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null, // Don't retry, fallback to memory
+    });
+
+    // Add connection timeout
+    const connectionPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Connection timeout')), 3000);
+      redis.on('connect', () => { clearTimeout(timeout); resolve(); });
+      redis.on('error', (err) => { clearTimeout(timeout); reject(err); });
+    });
+
+    try {
+      await connectionPromise;
+    } catch {
+      redis.disconnect();
+      return null;
+    }
 
     const now = Date.now();
     const windowKey = `ratelimit:${key}:${Math.floor(now / config.windowMs)}`;
@@ -93,7 +114,7 @@ async function checkRateLimitRedis(
     }
 
     const ttl = await redis.pttl(windowKey);
-    await redis.quit();
+    redis.disconnect();
 
     const resetAt = now + (ttl > 0 ? ttl : config.windowMs);
     const allowed = count <= config.maxRequests;

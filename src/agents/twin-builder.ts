@@ -1,7 +1,11 @@
 import path from 'path';
 import fs from 'fs/promises';
 import fssync from 'fs';
-import { execFile } from 'child_process';
+function getExecFile() {
+  // Dynamically require to avoid bundling child_process in serverless/edge builds
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('child_process').execFile;
+}
 import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle } from '../lib/metrics';
 import { logEvent } from '../lib/audit';
@@ -89,10 +93,14 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
 
   try {
     legacyProfile = profileLegacyRepo(repoPath);
+    log(taskId, 'Analyzer legacy-profiler loaded');
     behavior = classifyBehavior(legacyProfile);
+    log(taskId, 'Analyzer behavior-classifier loaded');
     harness = generateHarness(legacyProfile, behavior, incident);
+    log(taskId, 'Analyzer harness-generator loaded');
   } catch (err: unknown) {
     log(taskId, `Analyzer falhou: ${err instanceof Error ? err.message : String(err)}`);
+    throw err instanceof Error ? err : new Error(String(err));
   }
   if (sandbox?.enabled) {
     log(taskId, `Sandbox ligado (runner=${sandbox.runnerPath || 'default'}, mode=${sandbox.failMode || 'fail'})`, 'sandbox');
@@ -263,7 +271,7 @@ async function execSandbox(runnerPath: string, repoPath: string, command: string
 
   try {
     await new Promise<void>((resolve, reject) => {
-      const child = execFile('bash', [runnerPath, repoPathForRunner, command], { timeout: 10 * 60 * 1000 }, (err, stdout, stderr) => {
+      const child = getExecFile()('bash', [runnerPath, repoPathForRunner, command], { timeout: 10 * 60 * 1000 }, (err: Error | null, stdout: string, stderr: string) => {
         if (stdout) log(taskId, `Sandbox stdout: ${stdout.slice(0, 1000)}`, 'sandbox');
         if (stderr) log(taskId, `Sandbox stderr: ${stderr.slice(0, 1000)}`, 'sandbox');
         if (err) {

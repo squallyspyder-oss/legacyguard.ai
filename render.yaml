@@ -1,61 +1,72 @@
-# Render manifest for legacyguard
-# Adjust service names, branch and plan as needed in Render dashboard
 services:
   - type: web
     name: legacyguard-web
     env: node
     branch: main
+    region: oregon
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     autoDeploy: true
-    plan: free
+    plan: starter
     envVars:
       - key: NODE_ENV
         value: production
       - key: OPENAI_API_KEY
         fromSecret: OPENAI_API_KEY
-      - key: SUPABASE_URL
-        fromSecret: SUPABASE_URL
-      - key: SUPABASE_PUBLIC_KEY
-        fromSecret: SUPABASE_PUBLIC_KEY
-      - key: SUPABASE_SERVICE_KEY
-        fromSecret: SUPABASE_SERVICE_KEY
+      - key: OPENAI_CHEAP_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_DEEP_MODEL
+        value: gpt-4o
       - key: PGVECTOR_URL
         fromSecret: PGVECTOR_URL
+      - key: AUDIT_DB_URL
+        fromSecret: AUDIT_DB_URL
       - key: REDIS_URL
         fromSecret: REDIS_URL
       - key: NEXTAUTH_SECRET
         fromSecret: NEXTAUTH_SECRET
+      - key: NEXTAUTH_URL
+        fromSecret: NEXTAUTH_URL
       - key: GITHUB_ID
         fromSecret: GITHUB_ID
       - key: GITHUB_SECRET
         fromSecret: GITHUB_SECRET
 
-  - type: worker
+  - type: background
     name: legacyguard-worker
     env: docker
     branch: main
+    region: oregon
     dockerfilePath: Dockerfile.worker
     autoDeploy: true
-    plan: free
+    plan: starter
     envVars:
       - key: NODE_ENV
         value: production
       - key: OPENAI_API_KEY
         fromSecret: OPENAI_API_KEY
-      - key: SUPABASE_URL
-        fromSecret: SUPABASE_URL
-      - key: SUPABASE_PUBLIC_KEY
-        fromSecret: SUPABASE_PUBLIC_KEY
-      - key: SUPABASE_SERVICE_KEY
-        fromSecret: SUPABASE_SERVICE_KEY
+      - key: OPENAI_CHEAP_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_DEEP_MODEL
+        value: gpt-4o
       - key: PGVECTOR_URL
         fromSecret: PGVECTOR_URL
+      - key: AUDIT_DB_URL
+        fromSecret: AUDIT_DB_URL
       - key: REDIS_URL
         fromSecret: REDIS_URL
       - key: NEXTAUTH_SECRET
         fromSecret: NEXTAUTH_SECRET
+      - key: NEXTAUTH_URL
+        fromSecret: NEXTAUTH_URL
       - key: GITHUB_ID
         fromSecret: GITHUB_ID
       - key: GITHUB_SECRET
         fromSecret: GITHUB_SECRET
+
+databases:
+  - name: legacyguard-postgres
+    plan: starter
+    region: oregon
+
+# Note: For pgvector you may prefer to provision Neon/Supabase and set PGVECTOR_URL

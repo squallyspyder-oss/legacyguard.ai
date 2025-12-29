@@ -1,3 +1,0 @@
-{
-  "deprecated": "This project now uses Render for deployments. vercel.json retained only for historical reference. Remove this file if not needed."
-}

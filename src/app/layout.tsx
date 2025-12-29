@@ -1,37 +1,48 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import Providers from "./Providers";
+import type React from "react"
+import type { Metadata, Viewport } from "next"
+import { Inter, JetBrains_Mono } from "next/font/google"
+import "./globals.css"
+import Providers from "./Providers"
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
   subsets: ["latin"],
-});
+  variable: "--font-inter",
+  display: "swap",
+})
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-});
+  variable: "--font-jetbrains",
+  display: "swap",
+})
 
 export const metadata: Metadata = {
-  title: "LegacyGuard | Secure AI Orchestration",
-  description: "Console de chat multi-agente do LegacyGuard para revisão, orquestração e testes seguros.",
-};
+  title: "LegacyGuard | AI Security Platform",
+  description:
+    "Plataforma de seguranca com IA para sistemas legados. Orquestracao multi-agente, sandbox isolado, e compliance automatizado.",
+  keywords: ["AI", "security", "legacy systems", "COBOL", "orchestration", "DevSecOps"],
+  authors: [{ name: "LegacyGuard" }],
+  icons: {
+    icon: "/favicon.svg",
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: "#0c0f16",
+  width: "device-width",
+  initialScale: 1,
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <Providers>
-          {children}
-        </Providers>
+    <html lang="pt-BR" className="dark">
+      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+        <Providers>{children}</Providers>
       </body>
     </html>
-  );
+  )
 }

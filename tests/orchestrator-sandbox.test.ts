@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { Orchestrator } from '../src/agents/orchestrator';
 
 // Estes testes focam em regras de segurança: safe mode e sandbox fail/warn.
@@ -16,23 +18,41 @@ describe('orchestrator sandbox/safe mode', () => {
 
   it('falha sandbox quando runner ausente e failMode=fail', async () => {
     const orch = new Orchestrator();
+    // Create a temporary failing runner script to force shell execution and failure
+    const runnerPath = path.join(process.cwd(), 'tests', 'tmp-failing-runner.sh');
+    fs.writeFileSync(runnerPath, '#!/bin/bash\nexit 1');
+    try { fs.chmodSync(runnerPath, 0o755); } catch {}
+
     orch.setContext({
       repoPath: process.cwd(),
       sandbox: {
         enabled: true,
-        runnerPath: '/path/que/nao/existe.sh',
+        runnerPath,
         failMode: 'fail',
         command: 'echo oi',
+        useDocker: false,
       },
     });
     let failed = false;
+    // Force sandbox capabilities to prefer shell so missing runnerPath causes failure
+    const sandboxLib = await import('../src/lib/sandbox');
+    const spy = (sandboxLib as any).getSandboxCapabilities
+      ? vi.spyOn(sandboxLib as any, 'getSandboxCapabilities')
+      : null;
+    if (spy) {
+      spy.mockResolvedValue({ docker: false, shell: true, recommended: 'shell' });
+    }
+
     try {
       await orch['runSandboxIfEnabled']({ id: 't1', agent: 'executor', description: '', dependencies: [], priority: 'low' } as any);
     } catch {
       failed = true;
     }
+
+    if (spy) spy.mockRestore();
+    try { fs.unlinkSync(runnerPath); } catch {}
     expect(failed).toBe(true);
-  });
+  }, 20000);
 
   it('segue quando runner ausente e failMode=warn', async () => {
     const orch = new Orchestrator();

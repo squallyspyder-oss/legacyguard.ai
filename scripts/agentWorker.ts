@@ -16,6 +16,7 @@ import { runExecutor } from '../src/agents/executor';
 import { runReviewer } from '../src/agents/reviewer';
 import { createOrchestrator, OrchestrationState } from '../src/agents/orchestrator';
 import { consumeReservation, refundReservation } from '../src/lib/quotas';
+import { logBootDiagnostics } from '../src/lib/boot';
 
 // Stream para resultados (feedback loop)
 const RESULTS_STREAM = 'agent-results';
@@ -103,6 +104,7 @@ async function main() {
   const group = 'legacyguard-workers';
   const consumer = `worker-${process.pid}`;
 
+  logBootDiagnostics('agent-worker');
   await ensureGroup(stream, group).catch(() => {});
   await ensureGroup(RESULTS_STREAM, 'results-consumers').catch(() => {});
 
@@ -112,8 +114,8 @@ async function main() {
   console.log('   Aguardando tarefas...\n');
 
   while (true) {
-    try {
-      const res = await readGroup(stream, group, consumer, 1, 5000);
+        try {
+      const res = await readGroup(stream, group, consumer, 1, 5000) as [string, [string, string[]][]][] | null;
       if (!res || !Array.isArray(res)) continue;
 
       for (const [, items] of res as Array<[string, Array<[string, string[]]>]>) {

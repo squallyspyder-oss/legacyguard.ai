@@ -1,5 +1,5 @@
 // Pricing and quota scaffolding for future token-based plans.
-// Note: values are placeholders; adjust with real OpenAI billing when linking to Vercel billing.
+// Note: values are placeholders; adjust with real OpenAI billing rates.
 
 export type PlanId = 'free' | 'pro' | 'enterprise';
 

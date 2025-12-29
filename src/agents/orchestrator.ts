@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import path from 'path';
 import fs from 'fs';
-import { promisify } from 'util';
-import { execFile } from 'child_process';
 import { runPlanner, Plan, SubTask, getExecutionOrder } from './planner';
 import { runAdvisor } from './advisor';
 import { runOperator } from './operator';
@@ -13,29 +11,7 @@ import { analyzeImpact } from '../lib/impact';
 import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle, markMitigation, recordRegression } from '../lib/metrics';
 import { logEvent } from '../lib/audit';
-import { runSandbox, SandboxResult, getSandboxCapabilities } from '../lib/sandbox';
-import type { HarnessCommands } from '../lib/sandbox';
-
-const execFileAsync = promisify(execFile);
-
-type SandboxConfig = {
-  enabled?: boolean;
-  repoPath?: string;
-  command?: string;
-  commands?: Array<{ name: string; command: string; notes?: string }>; // Harness commands from Twin
-  runnerPath?: string;
-  timeoutMs?: number;
-  failMode?: 'fail' | 'warn'; // fail = abort executor; warn = log and continuar
-  languageHint?: string; // opcional para escolher preset
-  onLog?: (message: string) => void;
-  isolationProfile?: 'strict' | 'permissive';
-  networkPolicy?: 'none' | 'bridge';
-  fsPolicy?: 'readonly' | 'readwrite';
-  memoryLimit?: string;
-  cpuLimit?: string;
-  tmpfsSizeMb?: number;
-  harnessCommands?: HarnessCommands; // commands provided by Twin Builder
-};
+import { runSandbox, SandboxResult, getSandboxCapabilities, SandboxConfig, HarnessCommands } from '../lib/sandbox';
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'awaiting-approval';
 
@@ -89,6 +65,7 @@ export class Orchestrator {
 
   constructor(callbacks: OrchestrationCallbacks = {}) {
     this.callbacks = callbacks;
+    console.log('[agent] Agent initialized');
   }
 
   private log(message: string) {
@@ -105,6 +82,7 @@ export class Orchestrator {
 
   async execute(request: string, context?: any): Promise<OrchestrationState> {
     this.log(`Iniciando orquestração para: "${request.slice(0, 100)}..."`);
+    this.log('analysis started');
 
     if (context) {
       this.setContext({ ...context });
@@ -157,13 +135,9 @@ export class Orchestrator {
           this.log(`   🔧 Harness: ${twinResult.harness.commands.length} comandos sugeridos`);
           // Enriquecer sandbox config com harness commands
           if (this.taskContext.sandbox) {
-            this.taskContext.sandbox.commands = twinResult.harness.commands;
+            this.taskContext.sandbox.commands = twinResult.harness.commands.map(c => c.command);
             this.taskContext.sandbox.harnessCommands = {
-              run: twinResult.harness.commands,
-              setup: twinResult.harness.setup || [],
-              teardown: twinResult.harness.teardown || [],
-              env: twinResult.harness.env,
-              workdir: twinResult.harness.workdir,
+              run: twinResult.harness.commands.map(c => c.command),
             };
           }
         }
@@ -198,7 +172,6 @@ export class Orchestrator {
       request,
       context: context?.summary,
       repoInfo: context?.repoInfo,
-      twinContext: twinResult, // Passa contexto do twin para o planner
     });
 
     // Guardrail adicional: se risco vier alto/crítico, exigir aprovação mesmo que o planner não marque
@@ -348,8 +321,9 @@ export class Orchestrator {
       switch (task.agent) {
         case 'advisor':
           result.output = await runAdvisor({
-            ...this.taskContext,
+            repoPath: this.taskContext.repoPath,
             query: task.description,
+            twinContext: this.taskContext.twinResult,
             dependencyContext: depContext,
           });
           break;
@@ -394,9 +368,10 @@ export class Orchestrator {
 
           await this.runSandboxIfEnabled(task);
           result.output = await runOperator({
-            ...this.taskContext,
+            repoPath: this.taskContext.repoPath || '',
             action: task.description,
             dependencyContext: depContext,
+            twinContext: this.taskContext.twinResult,
           });
           break;
         }
@@ -407,8 +382,12 @@ export class Orchestrator {
           }
           await this.runSandboxIfEnabled(task);
           result.output = await runExecutor({
-            ...this.taskContext,
+            owner: this.taskContext.owner || '',
+            repo: this.taskContext.repo || '',
+            prNumber: this.taskContext.prNumber || 0,
+            token: this.taskContext.token || '',
             action: task.description,
+            twinContext: this.taskContext.twinResult,
             dependencyContext: depContext,
           });
           break;
@@ -586,6 +565,8 @@ export class Orchestrator {
       memoryLimit: sandbox.memoryLimit,
       cpuLimit: sandbox.cpuLimit,
       tmpfsSizeMb: sandbox.tmpfsSizeMb,
+      useDocker: sandbox.useDocker,
+      runnerPath: sandbox.runnerPath,
       onLog: (m) => this.log(m),
     });
 

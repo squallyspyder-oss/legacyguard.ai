@@ -61,9 +61,16 @@ export async function startAgentsConsumer() {
     const res = await readGroup(STREAM, GROUP, CONSUMER, 10, 5000);
     if (!res) continue;
 
-    for (const [, messages] of res) {
+    for (const [, messages] of res as [string, [string, string[]][]][]) {
       for (const msg of messages) {
         const id = msg[0];
+        const fields = msg[1];
+        // Parse taskId from fields array (key-value pairs)
+        const taskIdIndex = fields.indexOf('taskId');
+        const taskId = taskIdIndex >= 0 ? fields[taskIdIndex + 1] : 'unknown';
+        const roleIndex = fields.indexOf('role');
+        const role = roleIndex >= 0 ? fields[roleIndex + 1] : 'unknown';
+        
         let attempts = 0;
         // retry simples em memória
         while (attempts < MAX_RETRIES) {
@@ -72,12 +79,12 @@ export async function startAgentsConsumer() {
             break;
           } catch (err: any) {
             attempts += 1;
-            emitSandboxLog({ taskId: msg[1]?.taskId, message: `[worker] erro (tentativa ${attempts}): ${err?.message || err}` });
+            emitSandboxLog({ taskId, message: `[worker] erro (tentativa ${attempts}): ${err?.message || err}` });
             console.error('Erro ao processar mensagem', err);
             if (attempts >= MAX_RETRIES) {
               await enqueueTask('agent-results', {
-                taskId: msg[1]?.taskId,
-                role: msg[1]?.role,
+                taskId,
+                role,
                 type: 'error',
                 error: err?.message || String(err),
               });

@@ -1,12 +1,22 @@
 // Cross-platform sandbox runner using Docker API
 // Falls back to shell script on Linux when available
 
-import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
+let spawn: any;
+let exec: any;
+function ensureChildProcess() {
+  if (!spawn || !exec) {
+    // Dynamically require to avoid bundlers/edge runtimes pulling in child_process at build time
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cp = require('child_process');
+    spawn = cp.spawn;
+    exec = cp.exec;
+  }
+}
 import path from 'path';
 import fs from 'fs';
 
-const execAsync = promisify(exec);
+// execAsync will be created on-demand via ensureChildProcess()
 
 // Harness commands from Twin Builder
 export type HarnessCommands = {
@@ -146,8 +156,12 @@ async function findTestCommand(repoPath: string, languageHint?: string): Promise
 
 // Check if Docker is available
 async function isDockerAvailable(): Promise<boolean> {
+  // Developer override: force Docker available for local testing without Docker/Wsl
+  if (process.env.LEGACYGUARD_FORCE_DOCKER === 'true') return true;
   try {
-    // Use a short timeout so tests and detection don't hang if Docker daemon is unresponsive
+    ensureChildProcess();
+    const execAsync = promisify(exec);
+    // Use a short timeout so detection does not hang if Docker daemon is unresponsive
     await execAsync('docker version --format "{{.Server.Version}}"', { timeout: 2000 });
     return true;
   } catch {
@@ -246,6 +260,7 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
     let stdout = '';
     let stderr = '';
     let killed = false;
+    ensureChildProcess();
 
     const proc = spawn('docker', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -257,19 +272,19 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
       proc.kill('SIGKILL');
     }, config.timeoutMs || 300000);
 
-    proc.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       const str = data.toString();
       stdout += str;
       log(`[Sandbox/Docker] ${str.trim()}`);
     });
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const str = data.toString();
       stderr += str;
       log(`[Sandbox/Docker] [stderr] ${str.trim()}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       clearTimeout(timeout);
       const durationMs = Date.now() - startTime;
       
@@ -289,7 +304,7 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
       });
     });
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: Error) => {
       clearTimeout(timeout);
       resolve({
         success: false,
@@ -320,6 +335,8 @@ async function runShellSandbox(config: SandboxConfig): Promise<SandboxResult> {
       SANDBOX_TIMEOUT_MS: String(config.timeoutMs || 300000),
     };
 
+    ensureChildProcess();
+
     const proc = spawn('bash', [runnerPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
@@ -335,19 +352,19 @@ async function runShellSandbox(config: SandboxConfig): Promise<SandboxResult> {
       proc.kill('SIGKILL');
     }, config.timeoutMs || 300000);
 
-    proc.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       const str = data.toString();
       stdout += str;
       log(`[Sandbox/Shell] ${str.trim()}`);
     });
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const str = data.toString();
       stderr += str;
       log(`[Sandbox/Shell] [stderr] ${str.trim()}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       clearTimeout(timeout);
       resolve({
         success: code === 0,
@@ -360,7 +377,7 @@ async function runShellSandbox(config: SandboxConfig): Promise<SandboxResult> {
       });
     });
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: Error) => {
       clearTimeout(timeout);
       resolve({
         success: false,
@@ -390,6 +407,8 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
     const shell = isWindows ? 'cmd.exe' : '/bin/sh';
     const shellArgs = isWindows ? ['/c', command] : ['-c', command];
 
+    ensureChildProcess();
+
     const proc = spawn(shell, shellArgs, {
       cwd: config.repoPath,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -405,19 +424,19 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
       proc.kill('SIGKILL');
     }, config.timeoutMs || 300000);
 
-    proc.stdout?.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       const str = data.toString();
       stdout += str;
       log(`[Sandbox/Native] ${str.trim()}`);
     });
 
-    proc.stderr?.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const str = data.toString();
       stderr += str;
       log(`[Sandbox/Native] [stderr] ${str.trim()}`);
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code: number | null) => {
       clearTimeout(timeout);
       resolve({
         success: code === 0,
@@ -430,7 +449,7 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
       });
     });
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: Error) => {
       clearTimeout(timeout);
       resolve({
         success: false,
@@ -448,6 +467,14 @@ async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
 // Main sandbox runner
 export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> {
   const log = config.onLog || console.log;
+
+  log('[Sandbox] sandbox connected');
+  try {
+    const entries = fs.readdirSync(config.repoPath);
+    log(`[Sandbox] files parsed (${entries.length} entries)`);
+  } catch (err: any) {
+    log(`[Sandbox] files parsed (error reading): ${err?.message || err}`);
+  }
 
   if (!config.enabled) {
     log('[Sandbox] Disabled, skipping');
@@ -484,6 +511,10 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
     result.success = true; // Override for orchestrator
   }
 
+  if (result.success) {
+    log(`[Sandbox] sandbox exec ok (${result.method})`);
+  }
+
   return result;
 }
 
@@ -493,7 +524,7 @@ export async function getSandboxCapabilities(): Promise<{
   shell: boolean;
   recommended: 'docker' | 'shell' | 'native';
 }> {
-  const docker = await isDockerAvailable();
+  const docker = process.env.LEGACYGUARD_FORCE_DOCKER === 'true' ? true : await isDockerAvailable();
   const shell = process.platform !== 'win32';
 
   return {

@@ -5,7 +5,12 @@ import { Octokit } from 'octokit';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync } from 'child_process';
+
+function getExecSync() {
+  // Dynamically require to avoid bundling child_process in edge/SSR builds
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('child_process').execSync;
+}
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -72,7 +77,7 @@ export async function POST(req: NextRequest) {
 
     // === Semgrep ===
     try {
-      const output = execSync(`npx semgrep scan --config=auto --quiet --json "${tempDir}"`, { timeout: 120000 }).toString();
+      const output = getExecSync()( `npx semgrep scan --config=auto --quiet --json "${tempDir}"`, { timeout: 120000 } ).toString();
       const results = JSON.parse(output);
       const findings = results.results || [];
 
@@ -145,7 +150,7 @@ export async function POST(req: NextRequest) {
       if (hasPackageJson) {
         console.log('Executando npm audit...');
         try {
-          const auditOutput = execSync(`npm audit --json`, { cwd: tempDir, timeout: 60000 }).toString();
+          const auditOutput = getExecSync()(`npm audit --json`, { cwd: tempDir, timeout: 60000 }).toString();
           const audit = JSON.parse(auditOutput);
           const vulns = audit.metadata.vulnerabilities;
 
@@ -158,14 +163,14 @@ export async function POST(req: NextRequest) {
             depVulnResults += `### ✅ Nenhuma vulnerabilidade em dependências npm\n`;
           }
         } catch (npmError: any) {
-          depVulnResults += `### ⚠️ npm audit falhou (pode não ter package-lock.json)\n`;
+          depVulnResults += `### ⚠️ npm audit falhou\n`;
         }
       }
 
       if (hasRequirementsTxt) {
         try {
-          execSync(`pip install pip-audit`, { stdio: 'ignore' });
-          const auditOutput = execSync(`pip-audit --json`, { cwd: tempDir }).toString();
+          getExecSync()(`pip install pip-audit`, { stdio: 'ignore' });
+          const auditOutput = getExecSync()(`pip-audit --json`, { cwd: tempDir }).toString();
           const audit = JSON.parse(auditOutput);
           if (audit.vulnerabilities.length > 0) {
             depVulnResults += `### 🚨 ${audit.vulnerabilities.length} Vulnerabilidade(s) em pacotes Python\n\n`;
@@ -426,8 +431,5 @@ Seja profissional e priorize segurança.`
   }
 }
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// No App Router, body parsing is handled automatically by NextRequest
+// The old Pages Router config export is not needed

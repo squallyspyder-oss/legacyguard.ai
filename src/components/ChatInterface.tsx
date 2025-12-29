@@ -159,18 +159,11 @@ export default function ChatInterface() {
             return;
           }
         }
-        // fallback mock
-        setSessions([
-          { id: 'mock-1', title: 'Refactor auth legado', tag: 'segurança', recency: 'Hoje', risk: 'medio' },
-          { id: 'mock-2', title: 'Hardening pipeline CI', tag: 'devsecops', recency: 'Ontem', risk: 'baixo' },
-          { id: 'mock-3', title: 'Incident post-mortem', tag: 'auditoria', recency: '2 dias', risk: 'alto' },
-        ]);
+        // API returned non-ok or no sessions array - start fresh
+        setSessions([]);
       } catch {
-        setSessions([
-          { id: 'mock-1', title: 'Refactor auth legado', tag: 'segurança', recency: 'Hoje', risk: 'medio' },
-          { id: 'mock-2', title: 'Hardening pipeline CI', tag: 'devsecops', recency: 'Ontem', risk: 'baixo' },
-          { id: 'mock-3', title: 'Incident post-mortem', tag: 'auditoria', recency: '2 dias', risk: 'alto' },
-        ]);
+        // Network error - start with empty sessions
+        setSessions([]);
       } finally {
         setSessionsLoading(false);
       }

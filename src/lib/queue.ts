@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { getRedisUrl } from './config';
 
 let redisClient: Redis | null = null;
 
@@ -25,19 +26,21 @@ export const DLQ_STREAM = 'agents-dlq';
 
 export function connectRedis(url?: string) {
   if (redisClient) return redisClient;
+  let redisUrl = url || getRedisUrl();
+  if (!redisUrl) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Redis URL não configurado. Defina REDIS_URL ou REDIS_TLS_URL.');
+    }
+    redisUrl = 'redis://127.0.0.1:6379';
+  }
 
-  // sanitize incoming URL: remove surrounding quotes, whitespace, newlines
-  // and normalize `redis:/` -> `redis://` so we don't accidentally connect to a unix socket
-  let redisUrl = (url || process.env.REDIS_URL || 'redis://127.0.0.1:6379') as string;
+  // Sanitize incoming URL: remove quotes/whitespace and normalize protocol
   try {
     redisUrl = redisUrl.trim();
-    // remove surrounding quotes if present
     if ((redisUrl.startsWith('"') && redisUrl.endsWith('"')) || (redisUrl.startsWith("'") && redisUrl.endsWith("'"))) {
       redisUrl = redisUrl.slice(1, -1);
     }
-    // remove any leftover whitespace/newline characters
     redisUrl = redisUrl.replace(/\s+/g, '');
-    // fix single slash forms like "redis:/host:port" -> "redis://host:port"
     if (redisUrl.startsWith('redis:/') && !redisUrl.startsWith('redis://')) {
       redisUrl = redisUrl.replace('redis:/', 'redis://');
     }
@@ -45,14 +48,7 @@ export function connectRedis(url?: string) {
     console.warn('[REDIS] Failed to sanitize REDIS_URL, using raw value');
   }
 
-  try {
-    redisClient = new Redis(redisUrl);
-  } catch (err) {
-    console.error('[REDIS] Failed to create Redis client', err);
-    throw err;
-  }
-
-  // Always listen for errors to avoid unhandled error events
+  redisClient = new Redis(redisUrl);
   redisClient.on('error', (err) => console.error('Redis error', err));
   return redisClient;
 }
@@ -88,13 +84,11 @@ export async function enqueueTask(stream: string, data: Record<string, any>) {
   return r.xadd(stream, '*', ...flat);
 }
 
-export async function readGroup(stream: string, group: string, consumer: string, count = 1, block = 5000) {
+export async function readGroup(stream: string, group: string, consumer: string, count = 1, block = 5000): Promise<[string, [string, string[]][]][] | null> {
   const r = connectRedis();
-  // XREADGROUP GROUP <group> <consumer> BLOCK <ms> COUNT <count> STREAMS <stream> >
-  // ioredis TypeScript definitions have strict overloads for xreadgroup;
-  // cast to any to call the raw command with our arguments and avoid typing mismatch.
-  const res = await (r as any).xreadgroup('GROUP', group, consumer, 'BLOCK', block, 'COUNT', count, 'STREAMS', stream, '>');
-  return res; // raw response to be parsed by caller
+  // XREADGROUP GROUP <group> <consumer> [COUNT <count>] [BLOCK <ms>] STREAMS <stream> >
+  const res = await (r as any).xreadgroup('GROUP', group, consumer, 'COUNT', count, 'BLOCK', block, 'STREAMS', stream, '>');
+  return res as [string, [string, string[]][]][] | null; // raw response to be parsed by caller
 }
 
 export async function ack(stream: string, group: string, id: string) {
@@ -164,7 +158,7 @@ export async function sendToDLQ(
   data: Record<string, any>,
   error: string,
   finalAttempt: number
-): Promise<string> {
+): Promise<string | null> {
   const dlqEntry = {
     ...data,
     _dlqReason: error,
