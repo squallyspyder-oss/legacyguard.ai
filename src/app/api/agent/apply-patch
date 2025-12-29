@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     await archive.finalize();
 
     const zipBuffer = fs.readFileSync(zipPath);
-    console.log('[output] output persistido para download', { zipPath });
+    console.log('[output] output persisted for download', { zipPath });
 
     return new NextResponse(zipBuffer, {
       headers: {
@@ -41,8 +41,8 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[output] Falha ao gerar ZIP', error);
-    return NextResponse.json({ error: 'Falha ao gerar ZIP' }, { status: 500 });
+    console.error('[output] Failed to generate ZIP', error);
+    return NextResponse.json({ error: 'Failed to generate ZIP' }, { status: 500 });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

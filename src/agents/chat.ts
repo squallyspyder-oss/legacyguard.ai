@@ -64,7 +64,7 @@ export async function runChat(input: {
     };
   } catch (err: any) {
     console.error('[chat] LLM error', err);
-    throw new Error(`OpenAI chat falhou: ${err?.message || err}`);
+    throw new Error(`OpenAI chat failed: ${err?.message || err}`);
   }
 
   return {

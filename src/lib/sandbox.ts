@@ -472,7 +472,7 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
     const entries = fs.readdirSync(config.repoPath);
     log(`[Sandbox] files parsed (${entries.length} entries)`);
   } catch (err: any) {
-    log(`[Sandbox] files parsed (erro ao ler): ${err?.message || err}`);
+    log(`[Sandbox] files parsed (error reading): ${err?.message || err}`);
   }
 
   if (!config.enabled) {
