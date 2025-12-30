@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { X, Shield, Zap, Database, DollarSign, Info, Check, User, Bell, Keyboard, Settings2, Moon, Sun, Monitor } from "lucide-react"
+import { X, Shield, Zap, Server, DollarSign, Info, Check, User, Bell, Keyboard, Settings2, Moon, Sun, Monitor } from "lucide-react"
 import type { AppSettings } from "../layout/MainLayout"
 import type { UserSettings } from "../../app/api/user/settings/route"
 
@@ -98,7 +98,7 @@ export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSetti
     { id: "security" as const, label: "Seguranca", icon: <Shield className="w-4 h-4" /> },
     { id: "infrastructure" as const, label: "Infra", icon: <Zap className="w-4 h-4" /> },
     { id: "cost" as const, label: "Custos", icon: <DollarSign className="w-4 h-4" /> },
-    { id: "data" as const, label: "Dados", icon: <Database className="w-4 h-4" /> },
+    { id: "data" as const, label: "Dados", icon: <Server className="w-4 h-4" /> },
   ]
 
   return (
