@@ -12,9 +12,16 @@ function getExecSync() {
   return require('child_process').execSync;
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let openai: OpenAI | null = null;
+
+function getOpenAI(): OpenAI {
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return openai;
+}
 
 export async function POST(req: NextRequest) {
   let tempDir: string | null = null;
@@ -218,7 +225,7 @@ export async function POST(req: NextRequest) {
 
     let reply: string;
     try {
-      const completion = await openai.chat.completions.create({
+      const completion = await getOpenAI().chat.completions.create({
         model: 'gpt-4o-mini',
         temperature: 0.5,
         messages: [
