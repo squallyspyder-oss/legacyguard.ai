@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { X, Shield, Zap, DollarSign, Info, Check, User, Bell, Keyboard, Settings2, Moon, Sun, Monitor } from "lucide-react"
+import { X, Shield, Zap, DollarSign, Info, Check, User, Bell, Keyboard, Settings2, Moon, Sun, Monitor, Database } from "lucide-react"
 import type { AppSettings } from "../layout/MainLayout"
 import type { UserSettings } from "../../app/api/user/settings/route"
 

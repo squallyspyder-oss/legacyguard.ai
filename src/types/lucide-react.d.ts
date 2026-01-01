@@ -67,6 +67,7 @@ declare module "lucide-react" {
   export const Mail: LucideIcon
   export const KeyRound: LucideIcon
   export const Menu: LucideIcon
+  export const Database: LucideIcon
 
   export function createLucideIcon(iconName: string, node: React.ReactNode): LucideIcon
 }
