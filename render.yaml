@@ -4,8 +4,8 @@ services:
     env: node
     branch: main
     region: oregon
-    buildCommand: npm ci && npm run build
-    startCommand: npm run start
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
     autoDeploy: true
     plan: starter
     envVars:
