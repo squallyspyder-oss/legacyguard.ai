@@ -19,7 +19,7 @@ export async function GET() {
       direction: 'desc',
     });
 
-    const repos = data.map((repo) => ({
+    const repos = data.map((repo: { id: number; name: string; full_name: string; private: boolean; default_branch: string | undefined; html_url: string; clone_url: string | undefined; owner: { login: string } | null }) => ({
       id: repo.id,
       name: repo.name,
       fullName: repo.full_name,

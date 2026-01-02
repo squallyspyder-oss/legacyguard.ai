@@ -157,7 +157,7 @@ export async function runExecutor(task: ExecutorInput): Promise<ExecutorOutput> 
       ref: prData.head.sha,
     });
     const allChecks = checksResponse.data.check_runs;
-    const failedChecks = allChecks.filter(c => c.conclusion === 'failure');
+    const failedChecks = allChecks.filter((c: { conclusion: string | null }) => c.conclusion === 'failure');
     validations.checksPass = failedChecks.length === 0;
   } catch {
     // Se não conseguir verificar, assume que não passou
@@ -171,7 +171,7 @@ export async function runExecutor(task: ExecutorInput): Promise<ExecutorOutput> 
       repo,
       pull_number: prNumber,
     });
-    const approvals = reviewsResponse.data.filter(r => r.state === 'APPROVED');
+    const approvals = reviewsResponse.data.filter((r: { state: string }) => r.state === 'APPROVED');
     validations.approved = approvals.length > 0 || task.reviewerApproved === true;
   } catch {
     // Manter valor padrão
