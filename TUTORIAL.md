@@ -1,190 +1,100 @@
-# 🚀 TUTORIAL: Deploy do LegacyGuard no Render
+# 🚀 TUTORIAL: Deploy Completo do LegacyGuard
 
-Este tutorial guia você na configuração completa do LegacyGuard no Render.
-
----
-
-## 📋 Pré-requisitos
-
-### Contas Necessárias
-
-| Serviço | Obrigatório | Para quê | Link |
-|---------|-------------|----------|------|
-| **Render** | ✅ Sim | Hospedagem | [render.com](https://render.com) |
-| **OpenAI** | ✅ Sim | LLM (GPT-4o) | [platform.openai.com](https://platform.openai.com) |
-| **GitHub** | ✅ Sim | Repositório + API | [github.com](https://github.com) |
-| **Neon** | ✅ Sim | Postgres serverless | [neon.tech](https://neon.tech) |
-
-### Opcionais (Recomendados)
-
-| Serviço | Para quê | Benefício |
-|---------|----------|-----------|
-| **pgvector** no Neon | Busca semântica RAG | Melhora análise de código |
-| **Sentry** | Monitoramento de erros | Alertas de falhas |
-| **Upstash** | Redis serverless (quotas) | Rate limiting distribuído |
+Guia passo a passo para configurar o LegacyGuard em produção.
 
 ---
 
-## 🔑 Obter Chaves de API
+## 📋 Índice
 
-### 1. OpenAI API Key
+1. [Criar Contas](#1-criar-contas)
+2. [Configurar Neon (PostgreSQL)](#2-configurar-neon-postgresql)
+3. [Configurar Upstash (Redis)](#3-configurar-upstash-redis-opcional)
+4. [Configurar GitHub OAuth](#4-configurar-github-oauth)
+5. [Configurar OpenAI](#5-configurar-openai)
+6. [Deploy no Render](#6-deploy-no-render)
+7. [Verificar Deploy](#7-verificar-deploy)
+8. [Troubleshooting](#8-troubleshooting)
 
-1. Acesse [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-2. Clique em **Create new secret key**
-3. Copie a chave (começa com `sk-`)
-4. **Importante**: Adicione créditos em **Settings > Billing**
+---
 
-```
-OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
-```
+## 1. Criar Contas
 
-### 2. GitHub Token (Personal Access Token)
+Crie contas gratuitas nos serviços:
 
-1. Acesse [github.com/settings/tokens/new](https://github.com/settings/tokens?type=beta)
-2. Selecione **Fine-grained tokens**
-3. Configure:
-   - **Token name**: `LegacyGuard`
-   - **Expiration**: 90 days (ou mais)
-   - **Repository access**: Selecione os repos que o LegacyGuard vai acessar
-   - **Permissions**:
-     - **Contents**: Read and write
-     - **Pull requests**: Read and write
-     - **Issues**: Read and write
-     - **Metadata**: Read-only
-4. Clique em **Generate token**
+| Serviço | Link | Para quê |
+|---------|------|----------|
+| **Render** | [render.com](https://render.com) | Hospedagem da aplicação |
+| **Neon** | [neon.tech](https://neon.tech) | Banco de dados PostgreSQL |
+| **OpenAI** | [platform.openai.com](https://platform.openai.com) | API de IA (GPT-4) |
+| **GitHub** | [github.com](https://github.com) | OAuth + Repositório |
+| **Upstash** (opcional) | [upstash.com](https://upstash.com) | Redis para filas |
 
-```
-GITHUB_TOKEN=github_pat_xxxxxxxxxxxxx
-```
+---
 
-### 3. Neon Database URL
+## 2. Configurar Neon (PostgreSQL)
+
+### 2.1 Criar Projeto
 
 1. Acesse [console.neon.tech](https://console.neon.tech)
-2. Crie um projeto: **New Project** → Nome: `legacyguard`
-3. Copie a **Connection string** (formato pooled)
-4. **Habilite pgvector**:
+2. Clique em **New Project**
+3. Configure:
+   - **Name**: `legacyguard`
+   - **Region**: Escolha a mais próxima (ex: `US East`)
+4. Clique em **Create Project**
+
+### 2.2 Copiar Connection String
+
+1. No dashboard do projeto, vá em **Connection Details**
+2. Selecione **Connection string**
+3. Copie a URL (formato):
+   ```
+   postgresql://neondb_owner:xxxx@ep-xxx-xxx-123456.us-east-2.aws.neon.tech/neondb?sslmode=require
+   ```
+
+> ⚠️ **Guarde essa URL!** Você vai usar no Render.
+
+### 2.3 Habilitar pgvector
+
+1. No Neon, vá em **SQL Editor**
+2. Execute:
    ```sql
    CREATE EXTENSION IF NOT EXISTS vector;
    ```
 
-```
-DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require
-```
+### 2.4 Criar Tabelas
 
----
-
-## 🏗️ Configuração no Render
-
-### Opção A: Deploy com Docker (Recomendado)
-
-O modo Docker garante ambiente isolado e consistente.
-
-#### Passo 1: Criar Web Service
-
-1. No Render Dashboard, clique em **New +** → **Web Service**
-2. Conecte seu repositório GitHub
-3. Configure:
-
-| Campo | Valor |
-|-------|-------|
-| **Name** | `legacyguard` |
-| **Region** | Escolha a mais próxima |
-| **Branch** | `main` |
-| **Runtime** | **Docker** |
-| **Instance Type** | Standard ($7/mês) ou superior |
-| **Dockerfile Path** | `./Dockerfile` (raiz do projeto) |
-
-#### Passo 2: Variáveis de Ambiente
-
-No painel **Environment**, adicione:
-
-```env
-# Obrigatórias
-NODE_ENV=production
-OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
-GITHUB_TOKEN=github_pat_xxxxxxxxxxxxx
-DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
-
-# OpenAI Models
-OPENAI_CHEAP_MODEL=gpt-4o-mini
-OPENAI_DEEP_MODEL=gpt-4o
-
-# Auth (gere um valor aleatório)
-NEXTAUTH_SECRET=sua-chave-secreta-de-32-caracteres-minimo
-NEXTAUTH_URL=https://legacyguard.onrender.com
-
-# Opcional: pgvector para RAG
-PGVECTOR_ENABLED=true
-
-# Opcional: Sandbox Docker
-LEGACYGUARD_FORCE_DOCKER=false
-```
-
-> 💡 **Dica**: Gere `NEXTAUTH_SECRET` com: `openssl rand -base64 32`
-
-#### Passo 3: Deploy
-
-1. Clique em **Create Web Service**
-2. Aguarde o build (primeira vez demora ~5-10 min)
-3. Acesse a URL gerada: `https://legacyguard.onrender.com`
-
----
-
-### Opção B: Deploy com Node.js (Sem Docker)
-
-Mais simples, mas sem suporte a sandbox Docker.
-
-#### Passo 1: Criar Web Service
-
-1. **New +** → **Web Service**
-2. Configure:
-
-| Campo | Valor |
-|-------|-------|
-| **Runtime** | **Node** |
-| **Build Command** | `corepack enable && pnpm install && pnpm build` |
-| **Start Command** | `pnpm start` |
-| **Node Version** | `20` (ou especifique no `.node-version`) |
-
-#### Passo 2: Variáveis de Ambiente
-
-Mesmas do Docker acima.
-
----
-
-## 🗄️ Configurar Banco de Dados (Neon)
-
-### Criar Tabelas
-
-Execute no Neon SQL Editor:
+Execute no SQL Editor:
 
 ```sql
--- Habilitar pgvector
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- Schema de auditoria
+-- Tabela de auditoria
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,
   session_id TEXT NOT NULL,
+  user_id TEXT,
   action TEXT NOT NULL,
   agent TEXT,
   input JSONB,
   output JSONB,
   cost_usd NUMERIC(10, 6),
+  signature TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Schema de quotas
+CREATE INDEX idx_audit_session ON audit_logs(session_id);
+CREATE INDEX idx_audit_user ON audit_logs(user_id);
+
+-- Tabela de quotas
 CREATE TABLE IF NOT EXISTS user_quotas (
-  user_id TEXT PRIMARY KEY,
+  id SERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  month TEXT NOT NULL,
   tokens_used BIGINT DEFAULT 0,
-  tokens_limit BIGINT DEFAULT 1000000,
-  requests_today INT DEFAULT 0,
-  last_reset DATE DEFAULT CURRENT_DATE,
-  tier TEXT DEFAULT 'free'
+  usd_used NUMERIC(10, 6) DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, month)
 );
 
--- Schema de RAG (se pgvector habilitado)
+-- Tabela de embeddings (RAG)
 CREATE TABLE IF NOT EXISTS code_embeddings (
   id SERIAL PRIMARY KEY,
   repo_path TEXT NOT NULL,
@@ -198,115 +108,263 @@ CREATE TABLE IF NOT EXISTS code_embeddings (
 );
 
 -- Índice para busca vetorial
-CREATE INDEX IF NOT EXISTS code_embeddings_vector_idx 
+CREATE INDEX IF NOT EXISTS idx_embeddings_vector 
 ON code_embeddings USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
 ```
 
+### 2.5 (Automático) Integração GitHub
+
+Quando você cria o projeto Neon, ele pergunta se quer conectar ao GitHub.
+Se conectar, o Neon cria automaticamente:
+- `NEON_API_KEY` como Secret no GitHub
+- `NEON_PROJECT_ID` como Variable no GitHub
+- Workflow para criar branches de preview em PRs
+
 ---
 
-## 🐳 Worker de Background (Opcional)
+## 3. Configurar Upstash (Redis) - Opcional
 
-Se você precisa de processamento assíncrono (sandbox Docker, indexação):
+O Redis é usado para filas de tarefas e rate limiting. Opcional para começar.
 
-### Criar Background Worker
+### 3.1 Criar Database
 
-1. **New +** → **Background Worker**
-2. Configure:
+1. Acesse [console.upstash.com](https://console.upstash.com)
+2. Clique em **Create Database**
+3. Configure:
+   - **Name**: `legacyguard`
+   - **Region**: Escolha a mais próxima
+   - **TLS**: Enabled ✅
+4. Clique em **Create**
+
+### 3.2 Copiar Connection String
+
+1. Na página do database, copie **UPSTASH_REDIS_REST_URL** ou a URL Redis:
+   ```
+   rediss://default:xxxx@xxx-xxx-12345.upstash.io:6379
+   ```
+
+---
+
+## 4. Configurar GitHub OAuth
+
+Para autenticação de usuários via GitHub.
+
+### 4.1 Criar OAuth App
+
+1. Acesse [github.com/settings/developers](https://github.com/settings/developers)
+2. Clique em **OAuth Apps** → **New OAuth App**
+3. Configure:
 
 | Campo | Valor |
 |-------|-------|
-| **Name** | `legacyguard-worker` |
-| **Runtime** | **Docker** |
-| **Dockerfile Path** | `./Dockerfile.worker` |
+| **Application name** | `LegacyGuard` |
+| **Homepage URL** | `https://legacyguard-web.onrender.com` (ou sua URL) |
+| **Authorization callback URL** | `https://legacyguard-web.onrender.com/api/auth/callback/github` |
 
-3. Mesmas variáveis de ambiente do Web Service
+4. Clique em **Register application**
+
+### 4.2 Copiar Credenciais
+
+1. Copie o **Client ID**
+2. Clique em **Generate a new client secret**
+3. Copie o **Client Secret**
+
+> ⚠️ **Guarde essas credenciais!** O secret só aparece uma vez.
 
 ---
 
-## 🔧 Configurações Avançadas
+## 5. Configurar OpenAI
 
-### Auto-Deploy
+### 5.1 Criar API Key
 
-No Render, habilite **Auto-Deploy** para deploy automático em cada push.
+1. Acesse [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. Clique em **Create new secret key**
+3. Dê um nome: `LegacyGuard`
+4. Copie a chave (começa com `sk-`)
 
-### Health Check
+### 5.2 Adicionar Créditos
 
-Configure health check para monitoramento:
+1. Vá em **Settings** → **Billing**
+2. Adicione um método de pagamento
+3. Adicione créditos (mínimo $5 para começar)
+
+> ⚠️ Sem créditos, a API retorna erro 429.
+
+---
+
+## 6. Deploy no Render
+
+### 6.1 Criar Web Service
+
+1. Acesse [dashboard.render.com](https://dashboard.render.com)
+2. Clique em **New +** → **Web Service**
+3. Conecte seu repositório GitHub: `squallyspyder-oss/legacyguard.ai`
+4. Configure:
 
 | Campo | Valor |
 |-------|-------|
-| **Path** | `/api/config` |
-| **Interval** | 30 seconds |
+| **Name** | `legacyguard-web` |
+| **Region** | `Oregon (US West)` ou mais próximo |
+| **Branch** | `main` |
+| **Runtime** | `Docker` |
+| **Dockerfile Path** | `./Dockerfile` |
+| **Instance Type** | `Starter` ($7/mês) ou `Free` para teste |
 
-### Scaling
+### 6.2 Configurar Variáveis de Ambiente
 
-Para produção, considere:
-- **Instância**: Standard ou Pro
-- **Auto-scaling**: 2-4 instâncias
-- **Memory**: 1GB+ para builds grandes
+No Render, vá em **Environment** e adicione:
+
+#### Obrigatórias:
+
+| Key | Value | Descrição |
+|-----|-------|-----------|
+| `NODE_ENV` | `production` | Ambiente |
+| `OPENAI_API_KEY` | `sk-...` | Sua chave OpenAI |
+| `NEXTAUTH_SECRET` | (gere abaixo) | Chave de sessão |
+| `NEXTAUTH_URL` | `https://legacyguard-web.onrender.com` | URL do app |
+| `GITHUB_ID` | `Ov23li...` | Client ID do OAuth |
+| `GITHUB_SECRET` | `xxxx...` | Client Secret do OAuth |
+
+**Gerar NEXTAUTH_SECRET:**
+```bash
+openssl rand -base64 32
+```
+
+#### Banco de Dados:
+
+| Key | Value | Descrição |
+|-----|-------|-----------|
+| `AUDIT_DB_URL` | `postgresql://...@...neon.tech/...` | URL do Neon |
+| `PGVECTOR_URL` | (mesma URL do Neon) | Para embeddings |
+
+#### Opcionais:
+
+| Key | Value | Descrição |
+|-----|-------|-----------|
+| `REDIS_URL` | `rediss://...@...upstash.io:6379` | URL do Upstash |
+| `OPENAI_CHEAP_MODEL` | `gpt-4o-mini` | Modelo rápido |
+| `OPENAI_DEEP_MODEL` | `gpt-4o` | Modelo completo |
+| `AUDIT_SIGNING_KEY` | (qualquer string) | Assinatura de logs |
+
+### 6.3 Deploy
+
+1. Clique em **Create Web Service**
+2. Aguarde o build (~5-10 minutos na primeira vez)
+3. Quando aparecer **Live**, acesse a URL
 
 ---
 
-## 📊 Verificar Deploy
+## 7. Verificar Deploy
 
-Após deploy, teste os endpoints:
+### 7.1 Testar a Aplicação
+
+1. Acesse: `https://legacyguard-web.onrender.com`
+2. Clique em **Entrar com GitHub**
+3. Autorize o app
+4. Envie uma mensagem de teste no chat
+
+### 7.2 Verificar API
 
 ```bash
 # Health check
-curl https://legacyguard.onrender.com/api/config
+curl https://legacyguard-web.onrender.com/api/config
 
-# Chat (requer auth)
-curl -X POST https://legacyguard.onrender.com/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Olá, estou testando!"}'
+# Resposta esperada:
+# {"status":"ok","features":{...}}
 ```
 
----
+### 7.3 Verificar Logs
 
-## 🔍 Troubleshooting
+No Render Dashboard → seu serviço → **Logs**
 
-### Build Falha
-
-| Erro | Solução |
-|------|---------|
-| `corepack: command not found` | Use Node 20+ ou adicione `corepack enable` |
-| `ENOMEM` | Aumente instância ou use Docker |
-| `pnpm-lock.yaml not found` | Rode `pnpm install` local primeiro |
-
-### Runtime Errors
-
-| Erro | Solução |
-|------|---------|
-| `OPENAI_API_KEY missing` | Verifique variáveis de ambiente |
-| `Database connection failed` | Verifique `DATABASE_URL` e SSL |
-| `Docker not available` | Normal em Node runtime (use `LEGACYGUARD_FORCE_DOCKER=false`) |
-
-### Logs
-
-Acesse logs no Render Dashboard → Service → Logs
+Procure por:
+- ✅ `Ready on port 3000`
+- ✅ `[AUDIT] Connected to PostgreSQL`
+- ⚠️ Qualquer erro em vermelho
 
 ---
 
-## 🎯 Checklist Final
+## 8. Troubleshooting
 
-- [ ] Web Service criado no Render
-- [ ] Variáveis de ambiente configuradas
-- [ ] Neon database configurado com pgvector
-- [ ] OpenAI API key com créditos
-- [ ] GitHub token com permissões corretas
-- [ ] Health check funcionando
-- [ ] Primeiro acesso à UI funcionou
+### Erro: `ENOTFOUND host`
 
----
+**Causa**: Variável de banco de dados com valor placeholder.
 
-## 📚 Referências
-
-- [Render Docs](https://render.com/docs)
-- [Neon Docs](https://neon.tech/docs)
-- [OpenAI API](https://platform.openai.com/docs)
-- [Next.js Deploy](https://nextjs.org/docs/deployment)
+**Solução**: 
+1. Verifique `AUDIT_DB_URL` e `PGVECTOR_URL` no Render
+2. Devem ter a URL real do Neon, não `postgresql://user:pass@host:5432/...`
+3. Faça **Manual Deploy** após corrigir
 
 ---
 
-**Pronto!** 🎉 Seu LegacyGuard está rodando no Render.
+### Erro: `Missing OPENAI_API_KEY`
+
+**Solução**: Adicione `OPENAI_API_KEY` nas variáveis do Render.
+
+---
+
+### Erro: `OAuth callback error`
+
+**Causa**: URL de callback incorreta no GitHub OAuth.
+
+**Solução**: 
+1. Vá em GitHub → Settings → Developer settings → OAuth Apps
+2. Verifique se **Authorization callback URL** é exatamente:
+   ```
+   https://legacyguard-web.onrender.com/api/auth/callback/github
+   ```
+
+---
+
+### Erro: `Database connection failed`
+
+**Soluções**:
+1. Verifique se a URL do Neon tem `?sslmode=require` no final
+2. Verifique se o IP do Render não está bloqueado (Neon permite todos por padrão)
+3. Teste a conexão no Neon SQL Editor
+
+---
+
+### Build demora muito / falha
+
+**Soluções**:
+1. Primeira build demora ~10min (normal)
+2. Se falhar com `ENOMEM`, use instância maior
+3. Verifique os logs de build no Render
+
+---
+
+## 📋 Checklist Final
+
+- [ ] Conta Neon criada
+- [ ] Projeto Neon com pgvector habilitado
+- [ ] Tabelas criadas no Neon
+- [ ] Connection string do Neon copiada
+- [ ] Conta OpenAI com créditos
+- [ ] API Key OpenAI copiada
+- [ ] GitHub OAuth App criado
+- [ ] Client ID e Secret copiados
+- [ ] Render Web Service criado
+- [ ] Todas variáveis de ambiente configuradas
+- [ ] Deploy concluído com sucesso
+- [ ] Login via GitHub funcionando
+- [ ] Chat respondendo
+
+---
+
+## 🔗 Links Úteis
+
+| Serviço | Dashboard | Docs |
+|---------|-----------|------|
+| **Render** | [dashboard.render.com](https://dashboard.render.com) | [render.com/docs](https://render.com/docs) |
+| **Neon** | [console.neon.tech](https://console.neon.tech) | [neon.tech/docs](https://neon.tech/docs) |
+| **OpenAI** | [platform.openai.com](https://platform.openai.com) | [platform.openai.com/docs](https://platform.openai.com/docs) |
+| **Upstash** | [console.upstash.com](https://console.upstash.com) | [upstash.com/docs](https://upstash.com/docs) |
+| **GitHub OAuth** | [github.com/settings/developers](https://github.com/settings/developers) | [docs.github.com/apps/oauth-apps](https://docs.github.com/en/apps/oauth-apps) |
+
+---
+
+**Pronto!** 🎉 Seu LegacyGuard está rodando em produção.
+
+Se tiver problemas, verifique os logs no Render e revise este tutorial.
