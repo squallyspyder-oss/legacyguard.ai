@@ -10,6 +10,15 @@ export async function GET(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       const redis = connectRedis();
+      if (!redis) {
+        const sendEvent = (data: any) => {
+          const event = `data: ${JSON.stringify(data)}\n\n`;
+          controller.enqueue(encoder.encode(event));
+        };
+        sendEvent({ type: 'error', message: 'Redis não disponível para streaming' });
+        controller.close();
+        return;
+      }
       const resultsStream = 'agent-results';
       let lastId = '$'; // Começa do mais recente
 

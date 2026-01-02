@@ -6,8 +6,24 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMIT_PRESETS } from '../../../
 import { agentsRequestSchema, validateRequest, validationErrorResponse } from '../../../lib/schemas';
 import { requirePermission, Permission } from '../../../lib/rbac';
 import { enforceQuota, getCurrentMonth, isCircuitTripped, getCircuitStatus, reserveQuota } from '../../../lib/quotas';
+import { isWorkerEnabled } from '../../../lib/config';
 
 export async function POST(req: Request) {
+  console.log('[AGENTS] POST /api/agents chamado');
+
+  // Verificar se worker está habilitado
+  const workerEnabled = isWorkerEnabled();
+  console.log('[AGENTS] workerEnabled verificado:', workerEnabled);
+
+  if (!workerEnabled) {
+    console.log('[AGENTS] Worker desabilitado, retornando erro 503');
+    return NextResponse.json({
+      error: 'Worker desabilitado',
+      message: 'O worker não está habilitado nas configurações. Ative o worker para usar orquestração.',
+      workerDisabled: true
+    }, { status: 503 });
+  }
+
   // Rate limiting (strict for expensive LLM operations)
   const rateLimitResult = await checkRateLimit(req, { ...RATE_LIMIT_PRESETS.strict, keyPrefix: 'agents' });
   if (!rateLimitResult.allowed) {
@@ -119,7 +135,23 @@ export async function POST(req: Request) {
     };
   }
 
-  const id = await enqueueTask('agents', queuePayload);
+  let queueId: string | undefined;
+
+  try {
+    console.log('[AGENTS] Tentando enfileirar tarefa:', queuePayload);
+    queueId = await enqueueTask('agents', queuePayload);
+    console.log('[AGENTS] Tarefa enfileirada com ID:', queueId);
+  } catch (error: any) {
+    console.error('[AGENTS] Erro ao enfileirar tarefa:', error.message);
+    if (error.message === 'Redis not available for task enqueue') {
+      return NextResponse.json({
+        error: 'Worker desabilitado',
+        message: 'O sistema de filas (Redis) não está configurado. Configure o Redis para usar orquestração.',
+        workerDisabled: true
+      }, { status: 503 });
+    }
+    throw error;
+  }
 
   // Audit: registra enfileiramento (sem tokens)
   try {
@@ -140,7 +172,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     queued: true,
-    id,
+    id: queueId,
     taskId,
     streamUrl: `/api/agents/stream?taskId=${taskId}`,
   });

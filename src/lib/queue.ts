@@ -31,7 +31,8 @@ export function connectRedis(url?: string) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Redis URL não configurado. Defina REDIS_URL ou REDIS_TLS_URL.');
     }
-    redisUrl = 'redis://127.0.0.1:6379';
+    console.warn('[REDIS] Redis não configurado - retornando null');
+    return null; // Return null instead of trying to connect to localhost
   }
 
   // Sanitize incoming URL: remove quotes/whitespace and normalize protocol
@@ -65,6 +66,10 @@ export function disconnectRedis() {
 /** Ensure a consumer group exists for a stream. */
 export async function ensureGroup(stream: string, group: string) {
   const r = connectRedis();
+  if (!r) {
+    console.warn('[REDIS] Redis not available, skipping ensureGroup');
+    return;
+  }
   try {
     await r.xgroup('CREATE', stream, group, '$', 'MKSTREAM');
   } catch (e: any) {
@@ -77,6 +82,9 @@ export async function ensureGroup(stream: string, group: string) {
 
 export async function enqueueTask(stream: string, data: Record<string, any>) {
   const r = connectRedis();
+  if (!r) {
+    throw new Error('Redis not available for task enqueue');
+  }
   const flat: string[] = [];
   for (const k of Object.keys(data)) {
     flat.push(k, typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]));
@@ -86,6 +94,10 @@ export async function enqueueTask(stream: string, data: Record<string, any>) {
 
 export async function readGroup(stream: string, group: string, consumer: string, count = 1, block = 5000): Promise<[string, [string, string[]][]][] | null> {
   const r = connectRedis();
+  if (!r) {
+    console.warn('[REDIS] Redis not available, skipping readGroup');
+    return null;
+  }
   // XREADGROUP GROUP <group> <consumer> [COUNT <count>] [BLOCK <ms>] STREAMS <stream> >
   const res = await (r as any).xreadgroup('GROUP', group, consumer, 'COUNT', count, 'BLOCK', block, 'STREAMS', stream, '>');
   return res as [string, [string, string[]][]][] | null; // raw response to be parsed by caller
@@ -93,6 +105,10 @@ export async function readGroup(stream: string, group: string, consumer: string,
 
 export async function ack(stream: string, group: string, id: string) {
   const r = connectRedis();
+  if (!r) {
+    console.warn('[REDIS] Redis not available, skipping ack');
+    return;
+  }
   return r.xack(stream, group, id);
 }
 
@@ -181,6 +197,10 @@ export async function readPending(
   minIdleMs = 60000
 ): Promise<Array<{ id: string; data: Record<string, any>; idleMs: number; deliveryCount: number }>> {
   const r = connectRedis();
+  if (!r) {
+    console.warn('[REDIS] Redis not available, returning empty pending list');
+    return [];
+  }
 
   // XPENDING stream group - + count consumer
   const pending = await r.xpending(stream, group, '-', '+', count, consumer);
@@ -223,6 +243,10 @@ export async function readPending(
 /** Get DLQ entries for inspection/replay */
 export async function getDLQEntries(count = 100): Promise<Array<{ id: string; data: Record<string, any> }>> {
   const r = connectRedis();
+  if (!r) {
+    console.warn('[REDIS] Redis not available, returning empty DLQ');
+    return [];
+  }
   const entries = await r.xrange(DLQ_STREAM, '-', '+', 'COUNT', count);
 
   return entries.map(([id, pairs]) => {
@@ -241,6 +265,10 @@ export async function getDLQEntries(count = 100): Promise<Array<{ id: string; da
 /** Replay a DLQ entry back to the main queue */
 export async function replayFromDLQ(dlqId: string, targetStream: string): Promise<boolean> {
   const r = connectRedis();
+  if (!r) {
+    console.warn('[REDIS] Redis not available, cannot replay from DLQ');
+    return false;
+  }
   const entries = await r.xrange(DLQ_STREAM, dlqId, dlqId);
 
   if (!entries || entries.length === 0) return false;

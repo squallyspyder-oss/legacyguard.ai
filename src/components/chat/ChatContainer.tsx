@@ -238,7 +238,11 @@ export default function ChatContainer({
 
       // Orchestrate mode - call /api/agents
       if (agentRole === "orchestrate") {
+        console.log('[CHAT] Verificando workerEnabled para orquestração:', settings.workerEnabled);
+        console.log('[CHAT] Configurações completas:', settings);
+
         if (!settings.workerEnabled) {
+          console.log('[CHAT] Worker desabilitado, mostrando mensagem de erro');
           const assistantMessage: Message = {
             id: `msg-${Date.now() + 1}`,
             role: "assistant",
@@ -287,7 +291,10 @@ export default function ChatContainer({
       
       if (agentModesThroughQueue.includes(agentRole)) {
         // Esses agentes rodam via worker - usar /api/agents
+        console.log('[CHAT] Verificando workerEnabled para agente', agentRole, ':', settings.workerEnabled);
+
         if (!settings.workerEnabled) {
+          console.log('[CHAT] Worker desabilitado para agente', agentRole, ', mostrando mensagem de erro');
           const assistantMessage: Message = {
             id: `msg-${Date.now() + 1}`,
             role: "assistant",

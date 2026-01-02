@@ -131,21 +131,36 @@ export default function MainLayout() {
   useEffect(() => {
     const loadConfig = async () => {
       try {
+        console.log('[FRONTEND] Carregando configuração do servidor...');
         const res = await fetch("/api/config")
+        console.log('[FRONTEND] Resposta da API config:', res.status, res.ok);
+
         if (res.ok) {
           const data = await res.json()
+          console.log('[FRONTEND] Dados recebidos da API:', data);
           const cfg = data.config || {}
-          setSettings((prev) => ({
-            ...prev,
-            sandboxEnabled: cfg.sandboxEnabled ?? prev.sandboxEnabled,
-            sandboxMode: cfg.sandboxFailMode ?? prev.sandboxMode,
-            safeMode: cfg.safeMode ?? prev.safeMode,
-            workerEnabled: cfg.workerEnabled ?? prev.workerEnabled,
-            maskingEnabled: cfg.maskingEnabled ?? prev.maskingEnabled,
-            deepSearch: cfg.deepSearch ?? prev.deepSearch,
-          }))
+          console.log('[FRONTEND] Configuração extraída:', cfg);
+          console.log('[FRONTEND] workerEnabled da API:', cfg.workerEnabled);
+
+          setSettings((prev) => {
+            const newSettings = {
+              ...prev,
+              sandboxEnabled: cfg.sandboxEnabled ?? prev.sandboxEnabled,
+              sandboxMode: cfg.sandboxFailMode ?? prev.sandboxMode,
+              safeMode: cfg.safeMode ?? prev.safeMode,
+              workerEnabled: cfg.workerEnabled ?? prev.workerEnabled,
+              maskingEnabled: cfg.maskingEnabled ?? prev.maskingEnabled,
+              deepSearch: cfg.deepSearch ?? prev.deepSearch,
+            };
+            console.log('[FRONTEND] Novas configurações aplicadas:', newSettings);
+            console.log('[FRONTEND] workerEnabled final:', newSettings.workerEnabled);
+            return newSettings;
+          })
+        } else {
+          console.error('[FRONTEND] Falha ao carregar configuração:', res.status);
         }
-      } catch {
+      } catch (error) {
+        console.error('[FRONTEND] Erro ao carregar configuração:', error);
         // Keep defaults
       }
     }
