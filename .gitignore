@@ -44,3 +44,18 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 dist/
+
+# build logs
+build-logs/
+*.log
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+
+# test artifacts
+test-results/
