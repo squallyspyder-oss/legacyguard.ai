@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useSession, signIn, signOut } from 'next-auth/react';
