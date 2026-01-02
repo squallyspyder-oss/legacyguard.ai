@@ -1,21 +1,27 @@
-FROM node:20-alpine AS builder
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Enable pnpm via corepack
+RUN corepack enable
+
 # Install deps (including dev deps to build TS)
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source and build worker
 COPY . .
-RUN npm run build:worker
+RUN pnpm run build:worker
 
-FROM node:20-alpine AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
+# Enable pnpm via corepack
+RUN corepack enable
+
 # Install only production deps
-COPY package.json package-lock.json ./
-RUN npm ci --only=production --no-audit --no-fund
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --prod
 
 # Copy compiled worker
 COPY --from=builder /app/dist ./dist
