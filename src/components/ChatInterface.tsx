@@ -931,7 +931,14 @@ export default function ChatInterface() {
                           ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-50'
                           : 'bg-white/5 border-white/10 text-slate-100'}`}
                     >
-                      <div dangerouslySetInnerHTML={{ __html: msg.content.replace(/\n/g, '<br />') }} />
+                      <div>
+                        {msg.content.split('\n').map((line, idx, arr) => (
+                          <React.Fragment key={idx}>
+                            {line}
+                            {idx < arr.length - 1 && <br />}
+                          </React.Fragment>
+                        ))}
+                      </div>
 
                       {msg.twinOffer && (
                         <div className="mt-3 flex flex-wrap gap-2">
