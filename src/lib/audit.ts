@@ -124,6 +124,25 @@ export function getAuditStorageStatus(): { persistent: boolean; warning?: string
   };
 }
 
+/** 
+ * Require persistent audit storage in production.
+ * Throws error if audit would fall back to in-memory storage.
+ * Call this at worker startup to fail fast.
+ */
+export function requirePersistentAudit(): void {
+  if (process.env.NODE_ENV === 'production' && !isAuditPersistent()) {
+    throw new Error(
+      '[AUDIT] FATAL: Production requires persistent audit storage.\n' +
+      'Configure AUDIT_DB_URL or PGVECTOR_URL environment variable.\n' +
+      'In-memory audit is not acceptable for compliance.'
+    );
+  }
+  
+  if (!isAuditPersistent()) {
+    console.warn('[AUDIT] Running with in-memory audit storage (acceptable for development)');
+  }
+}
+
 async function ensureSchema() {
   const client = getPool();
   if (!client) return; // modo memória

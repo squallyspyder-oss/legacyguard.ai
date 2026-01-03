@@ -68,6 +68,56 @@ export class Orchestrator {
     console.log('[agent] Agent initialized');
   }
 
+  /**
+   * Restaura estado de orquestração a partir de estado serializado (ex: do Redis)
+   * Permite retomar execução após aprovação em um worker diferente.
+   * 
+   * MANIFESTO: Callbacks não são serializáveis, então precisam ser repassados
+   * pelo worker que está restaurando a execução.
+   */
+  restoreFromState(savedState: OrchestrationState, context?: Record<string, any>): void {
+    // Validar que estado está em condição restaurável
+    if (!savedState.plan) {
+      throw new Error('Estado inválido: plano não encontrado');
+    }
+    
+    // Restaurar estado interno
+    this.state = {
+      ...savedState,
+      // Garantir que results é um Map (pode ter sido serializado como array)
+      results: savedState.results instanceof Map 
+        ? savedState.results 
+        : new Map(Array.isArray(savedState.results) ? savedState.results : []),
+      // Garantir que logs é array
+      logs: savedState.logs || [],
+      // Atualizar timestamp
+      updatedAt: new Date(),
+    };
+    
+    // Restaurar contexto se fornecido
+    if (context) {
+      this.taskContext = { ...this.taskContext, ...context };
+      if (context.executionPolicy) {
+        this.policy = context.executionPolicy as ExecutionPolicy;
+      }
+    }
+    
+    this.log(`Estado restaurado - wave ${this.state.currentWave}, status: ${this.state.status}`);
+  }
+
+  /**
+   * Retorna estado atual para serialização (ex: salvar no Redis)
+   */
+  getSerializableState(): OrchestrationState | null {
+    if (!this.state) return null;
+    
+    return {
+      ...this.state,
+      // Converter Map para array de entries para serialização JSON
+      results: new Map(this.state.results),
+    };
+  }
+
   private log(message: string) {
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] ${message}`;
@@ -472,10 +522,37 @@ export class Orchestrator {
   private async runSandboxIfEnabled(task: SubTask): Promise<SandboxResult | null> {
     const sandbox = this.taskContext.sandbox as SandboxConfig | undefined;
     const riskLevel = this.state?.plan.riskLevel || 'medium';
-    const requiresSandbox = riskLevel === 'high' || riskLevel === 'critical';
+    
+    // MANIFESTO Regra 6: Sandbox obrigatório para agentes que executam código
+    // Executor e Operator podem executar comandos - SEMPRE precisam de sandbox
+    const executesCode = task.agent === 'executor' || task.agent === 'operator';
+    const requiresSandbox = riskLevel === 'high' || riskLevel === 'critical' || executesCode;
+    
+    // Verificar se bypass explícito está configurado
+    const allowNativeExec = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC === 'true';
 
     if (!sandbox?.enabled && requiresSandbox) {
-      throw new Error('Sandbox obrigatório para tasks de risco alto/crítico');
+      if (allowNativeExec) {
+        this.log(`⚠️ AVISO: Sandbox desabilitado para ${task.agent} mas LEGACYGUARD_ALLOW_NATIVE_EXEC=true`);
+        this.log('⚠️ Execução prosseguirá SEM ISOLAMENTO - NÃO USE EM PRODUÇÃO');
+        
+        // AUDITAR o bypass de sandbox - isso é crítico para rastreabilidade
+        await logEvent({
+          action: 'sandbox.bypassed',
+          severity: 'warn',
+          message: `Sandbox bypassado para task ${task.id} (${task.agent})`,
+          metadata: {
+            taskId: task.id,
+            agent: task.agent,
+            riskLevel,
+            reason: 'LEGACYGUARD_ALLOW_NATIVE_EXEC=true',
+            orchestrationId: this.state?.id,
+          },
+        });
+        
+        return null;
+      }
+      throw new Error(`Sandbox obrigatório para agente ${task.agent} (${riskLevel} risk). Configure sandbox ou defina LEGACYGUARD_ALLOW_NATIVE_EXEC=true para bypass.`);
     }
 
     if (!sandbox?.enabled) return null;

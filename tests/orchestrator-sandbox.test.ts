@@ -115,4 +115,108 @@ describe('orchestrator sandbox/safe mode', () => {
     if (spy) spy.mockRestore();
     expect(failed).toBe(true);
   });
+
+  it('executor exige sandbox obrigatório (sem LEGACYGUARD_ALLOW_NATIVE_EXEC)', async () => {
+    // Garantir que env var não está configurada
+    const originalEnv = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+    delete process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+
+    const orch = new Orchestrator();
+    (orch as any).state = { plan: { riskLevel: 'low' }, logs: [] };
+    orch.setContext({
+      repoPath: process.cwd(),
+      sandbox: { enabled: true, command: 'echo test', failMode: 'fail' },
+    });
+
+    // Mock: Docker indisponível
+    const sandboxLib = await import('../src/lib/sandbox');
+    const spy = vi.spyOn(sandboxLib as any, 'getSandboxCapabilities')
+      .mockResolvedValue({ docker: false, shell: true, recommended: 'shell' });
+
+    let failed = false;
+    let errorMsg = '';
+    try {
+      await orch['runSandboxIfEnabled']({ 
+        id: 't-exec', 
+        agent: 'executor', 
+        description: 'test', 
+        dependencies: [], 
+        priority: 'low' 
+      } as any);
+    } catch (err: any) {
+      failed = true;
+      errorMsg = err.message;
+    }
+
+    spy.mockRestore();
+    process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = originalEnv;
+
+    expect(failed).toBe(true);
+    expect(errorMsg).toContain('Docker');
+  });
+
+  it('operator exige sandbox obrigatório (sem LEGACYGUARD_ALLOW_NATIVE_EXEC)', async () => {
+    const originalEnv = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+    delete process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+
+    const orch = new Orchestrator();
+    (orch as any).state = { plan: { riskLevel: 'low' }, logs: [] };
+    orch.setContext({
+      repoPath: process.cwd(),
+      sandbox: { enabled: true, command: 'echo test', failMode: 'fail' },
+    });
+
+    const sandboxLib = await import('../src/lib/sandbox');
+    const spy = vi.spyOn(sandboxLib as any, 'getSandboxCapabilities')
+      .mockResolvedValue({ docker: false, shell: true, recommended: 'shell' });
+
+    let failed = false;
+    try {
+      await orch['runSandboxIfEnabled']({ 
+        id: 't-op', 
+        agent: 'operator', 
+        description: 'test', 
+        dependencies: [], 
+        priority: 'low' 
+      } as any);
+    } catch {
+      failed = true;
+    }
+
+    spy.mockRestore();
+    process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = originalEnv;
+
+    expect(failed).toBe(true);
+  });
+
+  it('permite bypass com LEGACYGUARD_ALLOW_NATIVE_EXEC=true quando sandbox desabilitado', async () => {
+    const originalEnv = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+    process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = 'true';
+
+    const orch = new Orchestrator();
+    (orch as any).state = { plan: { riskLevel: 'low' }, logs: [] };
+    // Sandbox DESABILITADO mas com bypass permitido
+    orch.setContext({
+      repoPath: process.cwd(),
+      sandbox: { enabled: false },
+    });
+
+    let failed = false;
+    try {
+      await orch['runSandboxIfEnabled']({ 
+        id: 't-bypass', 
+        agent: 'executor', 
+        description: 'test', 
+        dependencies: [], 
+        priority: 'low' 
+      } as any);
+    } catch {
+      failed = true;
+    }
+
+    process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = originalEnv;
+
+    // Com bypass ativo e sandbox desabilitado, não deve falhar
+    expect(failed).toBe(false);
+  });
 });

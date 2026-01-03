@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { getServerSession } from 'next-auth';
+import { checkRagStatus } from '@/lib/indexer-pgvector';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 
 const DATA_DIR = path.join(process.cwd(), '.legacyguard');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 
+// Timeout para verificação RAG (evita requests travados)
+const RAG_CHECK_TIMEOUT_MS = 5000;
+
+// NOTA: ragReady foi REMOVIDO do DEFAULT_CONFIG
+// Agora é verificado em tempo real via checkRagStatus()
+// MANIFESTO Regra 1: Não mentir sobre status
 const DEFAULT_CONFIG = {
   sandboxEnabled: true,
   sandboxFailMode: 'fail',
@@ -12,7 +21,6 @@ const DEFAULT_CONFIG = {
   workerEnabled: false, // Temporariamente desabilitado por causa do Redis
   maskingEnabled: true,
   deepSearch: false,
-  ragReady: true,
   apiEnabled: false,
 };
 
@@ -57,8 +65,64 @@ function writeConfig(cfg: Record<string, unknown>) {
 export async function GET() {
   console.log('[CONFIG] GET /api/config chamado');
   const cfg = readConfig();
-  console.log('[CONFIG] Retornando configuração:', cfg);
-  return NextResponse.json({ config: cfg });
+  
+  // Verificar se usuário está autenticado para decidir nível de detalhe
+  let isAuthenticated = false;
+  try {
+    const session = await getServerSession(authOptions);
+    isAuthenticated = !!session?.user;
+  } catch {
+    // Sessão não disponível - tratar como não autenticado
+  }
+  
+  // Verificar RAG status em tempo REAL - não hardcoded
+  // MANIFESTO Regra 1: Features devem falhar honestamente
+  // Usuários autenticados veem detalhes, anônimos veem apenas ready/not ready
+  let ragStatus: {
+    ready: boolean;
+    configured: boolean;
+    connected?: boolean;
+    tableExists?: boolean;
+    documentCount: number;
+    error?: string;
+  } = {
+    ready: false,
+    configured: false,
+    documentCount: 0,
+    error: 'Verificação não executada',
+  };
+  
+  try {
+    ragStatus = await checkRagStatus({
+      timeoutMs: RAG_CHECK_TIMEOUT_MS,
+      includeDetails: isAuthenticated, // Só expõe contagem se autenticado
+    });
+    console.log('[CONFIG] RAG status verificado:', ragStatus);
+  } catch (err) {
+    console.error('[CONFIG] Erro ao verificar RAG:', err);
+    ragStatus.error = err instanceof Error ? err.message : 'Erro desconhecido';
+  }
+  
+  // Para requests não autenticados, limitar informação exposta
+  const sanitizedRagStatus = isAuthenticated
+    ? ragStatus
+    : {
+        ready: ragStatus.ready,
+        configured: ragStatus.configured,
+        // Omitir: connected, tableExists, documentCount, error (podem expor infra)
+      };
+  
+  // Mesclar config com status real do RAG
+  const response = {
+    config: {
+      ...cfg,
+      ragReady: ragStatus.ready,
+    },
+    ragStatus: sanitizedRagStatus,
+  };
+  
+  console.log('[CONFIG] Retornando configuração:', response);
+  return NextResponse.json(response);
 }
 
 export async function POST(req: NextRequest) {
