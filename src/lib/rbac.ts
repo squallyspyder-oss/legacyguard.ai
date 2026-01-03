@@ -3,6 +3,7 @@
 
 import { getServerSession } from 'next-auth';
 import { NextResponse } from 'next/server';
+import { logEvent } from './audit';
 
 export type Role = 'admin' | 'developer' | 'viewer' | 'guest';
 
@@ -104,6 +105,18 @@ export function getPermissions(role: Role): Permission[] {
   return ROLE_PERMISSIONS[role] ?? [];
 }
 
+// Debounce de logs de negação para evitar flood
+const lastDeniedLogAt = new Map<string, number>();
+const DENY_LOG_DEBOUNCE_MS = 1000;
+
+function shouldLogDeny(key: string): boolean {
+  const now = Date.now();
+  const last = lastDeniedLogAt.get(key) ?? 0;
+  if (now - last < DENY_LOG_DEBOUNCE_MS) return false;
+  lastDeniedLogAt.set(key, now);
+  return true;
+}
+
 // Middleware helper for route protection
 export async function requirePermission(
   permission: Permission
@@ -116,6 +129,21 @@ export async function requirePermission(
     const role = getUserRole(session);
 
     if (!hasPermission(role, permission)) {
+      // Audit denials (throttled to avoid flood)
+      const userId = (session as any)?.user?.id as string | undefined;
+      if (shouldLogDeny(`deny:${permission}:${role}:${userId || 'anon'}`)) {
+        void logEvent({
+          action: 'auth.denied',
+          severity: 'warn',
+          message: `Permission denied: requires '${permission}'`,
+          metadata: {
+            permission,
+            role,
+            userId,
+            email: session?.user?.email,
+          },
+        });
+      }
       return {
         authorized: false,
         response: NextResponse.json(
@@ -140,6 +168,13 @@ export async function requirePermission(
       },
     };
   } catch {
+    if (shouldLogDeny('auth:unauthenticated')) {
+      void logEvent({
+        action: 'auth.unauthenticated',
+        severity: 'warn',
+        message: 'Authentication required',
+      });
+    }
     return {
       authorized: false,
       response: NextResponse.json(
