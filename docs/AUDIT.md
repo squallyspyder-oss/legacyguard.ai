@@ -169,26 +169,31 @@
 ### Realidade
 
 #### ✅ O QUE FUNCIONA
-- [twin-builder.ts](../src/agents/twin-builder.ts) implementado (~340 linhas)
+- [twin-builder.ts](../src/agents/twin-builder.ts) implementado (~550 linhas)
 - Integração com analyzers (legacy-profiler, behavior-classifier)
 - Geração de harness via [harness-generator.ts](../src/analyzers/harness-generator.ts)
 - Worker processa `role: 'twin-builder'`
 - Emite logs estruturados
 - Integra com metrics (startIncidentCycle)
+- **[NOVO]** Clone automático de repositório remoto quando `repoPath` não existe
+- **[NOVO]** Suporte a GitHub token via `GITHUB_TOKEN`
+- **[NOVO]** Checkout de commit específico se `incident.repo.commit` fornecido
+- **[NOVO]** Cleanup automático em caso de falha
 
 #### ⚠️ LIMITAÇÕES
 1. **Fixtures Sintéticas São Heurísticas**
    - Baseadas em análise estática
    - Não garantem reprodução real do bug
 
-2. **Requer Repositório Local**
-   - `repoPath` deve existir e ser acessível
-   - Não clona de remoto automaticamente
+2. ~~**Requer Repositório Local**~~ ✅ CORRIGIDO
+   - ~~`repoPath` deve existir e ser acessível~~
+   - ~~Não clona de remoto automaticamente~~
+   - **Agora: Clone automático se `incident.repo` tiver URL ou owner/name**
 
 ### Status: 🟢 FUNCIONAL
-### Ação Requerida: BAIXA
-- Documentar limitações
-- Adicionar clone automático de repo
+### Ação Requerida: NENHUMA
+- ~~Documentar limitações~~ ✅ Documentado
+- ~~Adicionar clone automático de repo~~ ✅ IMPLEMENTADO
 
 ---
 
@@ -389,7 +394,7 @@ return NextResponse.json({
 
 1. **Roles RBAC configuráveis por tenant**
 2. **Audit de permission denied**
-3. **Clone automático de repo para Twin Builder**
+3. ~~**Clone automático de repo para Twin Builder**~~ ✅ IMPLEMENTADO
 4. **Teste E2E com Docker real em CI**
 5. **Hierarquia flexível de permissions**
 

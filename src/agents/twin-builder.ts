@@ -49,7 +49,7 @@ export type TwinBuilderResult = {
   status: 'prepared' | 'failed';
   snapshotPath?: string;
   syntheticFixturePath?: string;
-  syntheticTests?: Array<{ name: string; input: any }>;
+  syntheticTests?: Array<{ name: string; input: unknown }>;
   commands?: {
     test?: string;
     build?: string;
@@ -64,14 +64,185 @@ export type TwinBuilderResult = {
   behavior?: BehaviorClassification;
   harness?: HarnessPack;
   message: string;
+  /** Se o repositório foi clonado de remoto (true) ou era local (false/undefined) */
+  repoCloned?: boolean;
+  /** Caminho efetivo do repositório usado (pode ser diferente do input se foi clonado) */
+  resolvedRepoPath?: string;
 };
 
 function log(taskId: string, message: string, scope: 'sandbox' | 'orchestrator' = 'orchestrator') {
   emitSandboxLog({ taskId, message: `[twin-builder] ${message}`, scope });
 }
 
+// Diretório base para repositórios clonados
+const CLONED_REPOS_DIR = path.join(process.cwd(), '.legacyguard', 'cloned-repos');
+
+/**
+ * Clona repositório remoto para uso local pelo Twin Builder.
+ * Suporta GitHub URLs com autenticação via GITHUB_TOKEN.
+ * 
+ * @param repoUrl - URL do repositório (https://github.com/owner/repo ou owner/repo)
+ * @param targetDir - Diretório destino (opcional, gera automaticamente se não fornecido)
+ * @param commit - Commit específico para checkout (opcional)
+ * @param taskId - ID da task para logging
+ * @returns Caminho local do repositório clonado
+ */
+async function cloneRepository(
+  repoUrl: string,
+  targetDir: string | undefined,
+  commit: string | undefined,
+  taskId: string
+): Promise<string> {
+  // Normalizar URL do repositório
+  let normalizedUrl = repoUrl;
+  
+  // Se for formato owner/repo, converter para URL completa
+  if (!repoUrl.includes('://') && repoUrl.includes('/')) {
+    normalizedUrl = `https://github.com/${repoUrl}.git`;
+  }
+  
+  // Se for URL HTTPS do GitHub, adicionar token se disponível
+  const token = process.env.GITHUB_TOKEN;
+  if (token && normalizedUrl.includes('github.com') && normalizedUrl.startsWith('https://')) {
+    normalizedUrl = normalizedUrl.replace(
+      'https://github.com/',
+      `https://${token}@github.com/`
+    );
+  }
+  
+  // Determinar diretório destino
+  const repoName = repoUrl.split('/').slice(-1)[0].replace('.git', '');
+  const cloneDir = targetDir || path.join(CLONED_REPOS_DIR, `${repoName}-${Date.now()}`);
+  
+  log(taskId, `Clonando repositório: ${repoUrl.replace(/\/\/[^@]+@/, '//')} → ${cloneDir}`);
+  
+  try {
+    // Criar diretório pai se necessário
+    await fs.mkdir(path.dirname(cloneDir), { recursive: true });
+    
+    // Clone com depth=1 para ser mais rápido (shallow clone)
+    const cloneArgs = ['clone', '--depth', '1'];
+    
+    // Se commit específico, precisamos de clone completo
+    if (commit) {
+      cloneArgs.length = 0;
+      cloneArgs.push('clone');
+    }
+    
+    cloneArgs.push(normalizedUrl, cloneDir);
+    
+    await new Promise<void>((resolve, reject) => {
+      const child = getExecFile()('git', cloneArgs, { timeout: 5 * 60 * 1000 }, (err: Error | null, stdout: string, stderr: string) => {
+        if (stdout) log(taskId, `git clone stdout: ${stdout.slice(0, 500)}`);
+        if (stderr && !stderr.includes('Cloning into')) log(taskId, `git clone stderr: ${stderr.slice(0, 500)}`);
+        if (err) reject(err);
+        else resolve();
+      });
+      child.on('error', reject);
+    });
+    
+    // Checkout de commit específico se fornecido
+    if (commit) {
+      log(taskId, `Checkout do commit: ${commit}`);
+      await new Promise<void>((resolve, reject) => {
+        getExecFile()('git', ['checkout', commit], { cwd: cloneDir, timeout: 60 * 1000 }, (err: Error | null) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    }
+    
+    log(taskId, `Repositório clonado com sucesso: ${cloneDir}`);
+    
+    await logEvent({
+      action: 'twin.repo.cloned',
+      severity: 'info',
+      message: `Repositório clonado para Twin Builder`,
+      metadata: { taskId, repoUrl, cloneDir, commit },
+    });
+    
+    return cloneDir;
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(taskId, `Falha ao clonar repositório: ${errorMsg}`);
+    
+    await logEvent({
+      action: 'twin.repo.clone.failed',
+      severity: 'error',
+      message: `Falha ao clonar repositório: ${errorMsg}`,
+      metadata: { taskId, repoUrl, error: errorMsg },
+    });
+    
+    throw new Error(`Falha ao clonar repositório ${repoUrl}: ${errorMsg}`);
+  }
+}
+
+/**
+ * Remove repositório clonado após uso.
+ * Chamado quando o twin builder finaliza (sucesso ou falha).
+ */
+async function cleanupClonedRepo(clonedPath: string, taskId: string): Promise<void> {
+  // Só limpa se estiver dentro do diretório de repos clonados
+  if (!clonedPath.startsWith(CLONED_REPOS_DIR)) {
+    return;
+  }
+  
+  try {
+    await fs.rm(clonedPath, { recursive: true, force: true });
+    log(taskId, `Repositório clonado removido: ${clonedPath}`);
+  } catch (err: unknown) {
+    // Não falhar se cleanup não funcionar
+    log(taskId, `Aviso: falha ao remover repo clonado: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
+ * Resolve o caminho do repositório: usa local se existir, clona se necessário.
+ */
+async function resolveRepoPath(
+  inputRepoPath: string,
+  incident: IncidentAlert,
+  taskId: string
+): Promise<{ repoPath: string; wasCloned: boolean }> {
+  // Se o caminho local existe, usar diretamente
+  if (fssync.existsSync(inputRepoPath)) {
+    log(taskId, `Usando repositório local: ${inputRepoPath}`);
+    return { repoPath: inputRepoPath, wasCloned: false };
+  }
+  
+  // Se não existe localmente, verificar se incidente tem info de repo remoto
+  const repoInfo = incident.repo;
+  if (!repoInfo) {
+    throw new Error(
+      `Repositório não encontrado em ${inputRepoPath} e incidente não tem informações de repositório remoto. ` +
+      `Forneça um repoPath válido ou inclua incident.repo com url/owner/name.`
+    );
+  }
+  
+  // Construir URL do repositório
+  let repoUrl: string | undefined;
+  
+  if (repoInfo.url) {
+    repoUrl = repoInfo.url;
+  } else if (repoInfo.owner && repoInfo.name) {
+    repoUrl = `${repoInfo.owner}/${repoInfo.name}`;
+  }
+  
+  if (!repoUrl) {
+    throw new Error(
+      `Informações insuficientes para clonar repositório. ` +
+      `Forneça incident.repo.url ou incident.repo.owner + incident.repo.name.`
+    );
+  }
+  
+  // Clonar repositório
+  const clonedPath = await cloneRepository(repoUrl, undefined, repoInfo.commit, taskId);
+  
+  return { repoPath: clonedPath, wasCloned: true };
+}
+
 export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBuilderResult> {
-  const { incident, repoPath, sandbox, taskId } = input;
+  const { incident, repoPath: inputRepoPath, sandbox, taskId } = input;
   const twinId = `twin-${taskId}`;
   const incidentId = incident.id || taskId;
   startIncidentCycle(incidentId, incident.source);
@@ -81,6 +252,24 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
     message: incident.title,
     metadata: { incidentId, source: incident.source },
   }).catch(() => undefined);
+
+  // Resolver caminho do repositório (local ou clonar de remoto)
+  let repoPath: string;
+  let wasCloned = false;
+  
+  try {
+    const resolved = await resolveRepoPath(inputRepoPath, incident, taskId);
+    repoPath = resolved.repoPath;
+    wasCloned = resolved.wasCloned;
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(taskId, `Falha ao resolver repositório: ${errorMsg}`);
+    return {
+      twinId,
+      status: 'failed',
+      message: errorMsg,
+    };
+  }
 
   // Deriva caminhos (snapshot, fixtures) de forma determinística e local
   const snapshotPath = path.join(repoPath, '.legacyguard', 'twin-snapshots', incident.id || taskId);
@@ -145,8 +334,11 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
       'utf-8'
     );
     log(taskId, `Fixture sintética gravada em ${syntheticFixturePath}`);
-  } catch (err: any) {
-    log(taskId, `Falha ao persistir fixture: ${err?.message || err}`);
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(taskId, `Falha ao persistir fixture: ${errorMsg}`);
+    // Cleanup se foi clonado
+    if (wasCloned) await cleanupClonedRepo(repoPath, taskId);
     return {
       twinId,
       status: 'failed',
@@ -157,13 +349,18 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
       commands,
       impactGuardrails,
       message: 'Falha ao preparar fixture do incidente',
+      repoCloned: wasCloned,
+      resolvedRepoPath: repoPath,
     };
   }
 
   if (sandbox?.enabled && sandbox.runnerPath) {
     try {
       await execSandbox(sandbox.runnerPath, repoPath, sandboxCommand, sandbox.failMode, taskId);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      // Cleanup se foi clonado
+      if (wasCloned) await cleanupClonedRepo(repoPath, taskId);
       return {
         twinId,
         status: 'failed',
@@ -173,7 +370,9 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
         syntheticTests,
         commands,
         impactGuardrails,
-        message: `Sandbox falhou: ${err?.message || err}`,
+        message: `Sandbox falhou: ${errorMsg}`,
+        repoCloned: wasCloned,
+        resolvedRepoPath: repoPath,
       };
     }
   }
@@ -184,8 +383,14 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
     action: 'twin.prepared',
     severity: 'info',
     message,
-    metadata: { incidentId, snapshotPath, fixture: syntheticFixturePath },
+    metadata: { incidentId, snapshotPath, fixture: syntheticFixturePath, repoCloned: wasCloned },
   }).catch(() => undefined);
+
+  // Cleanup de repo clonado após sucesso
+  // NOTA: Não removemos imediatamente para permitir debug posterior
+  // O cleanup pode ser feito manualmente ou via cron job
+  // Se quiser cleanup automático, descomentar:
+  // if (wasCloned) await cleanupClonedRepo(repoPath, taskId);
 
   return {
     twinId,
@@ -199,12 +404,16 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
     legacyProfile,
     behavior,
     harness,
-    message,
+    message: wasCloned 
+      ? `${message} (repositório clonado de ${incident.repo?.url || incident.repo?.owner + '/' + incident.repo?.name})`
+      : message,
+    repoCloned: wasCloned,
+    resolvedRepoPath: repoPath,
   };
 }
 
 function buildSyntheticTests(incident: IncidentAlert) {
-  const tests: Array<{ name: string; input: any }> = [];
+  const tests: Array<{ name: string; input: unknown }> = [];
   if (incident.payload) tests.push({ name: 'replay-payload', input: incident.payload });
   if (incident.stack) tests.push({ name: 'stack-sanity', input: { stack: incident.stack } });
   if (tests.length === 0) tests.push({ name: 'placeholder', input: { note: 'sem payload/stack' } });
@@ -287,8 +496,9 @@ async function execSandbox(runnerPath: string, repoPath: string, command: string
       child.on('error', reject);
     });
     log(taskId, 'Sandbox finalizado (twin-builder)', 'sandbox');
-  } catch (err: any) {
-    log(taskId, `Sandbox falhou (${failMode}): ${err?.message || err}`, 'sandbox');
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(taskId, `Sandbox falhou (${failMode}): ${errorMsg}`, 'sandbox');
     if (failMode === 'fail') throw err;
   }
 }
