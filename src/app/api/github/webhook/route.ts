@@ -48,9 +48,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
   
-  let payload: any;
+  // Tipo parcial do payload do webhook GitHub
+  type WebhookPayload = {
+    repository?: { full_name?: string; default_branch?: string };
+    sender?: { login?: string };
+    ref?: string;
+    after?: string;
+    head_commit?: { id?: string };
+  };
+  
+  let payload: WebhookPayload;
   try {
-    payload = JSON.parse(rawBody);
+    payload = JSON.parse(rawBody) as WebhookPayload;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
@@ -150,16 +159,17 @@ export async function POST(req: NextRequest) {
         },
         repo: { owner, repo },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       await logEvent({
         action: 'webhook.indexing.failed',
         severity: 'error',
-        message: `Falha na re-indexação de ${repoFullName}: ${err.message}`,
+        message: `Falha na re-indexação de ${repoFullName}: ${errorMessage}`,
         metadata: { 
           eventType,
           owner, 
           repo,
-          error: err.message,
+          error: errorMessage,
         },
         repo: { owner, repo },
       });
