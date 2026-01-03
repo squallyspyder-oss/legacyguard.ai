@@ -135,7 +135,7 @@ export async function POST(req: Request) {
     };
   }
 
-  let queueId: string | undefined;
+  let queueId: string | null | undefined;
 
   try {
     console.log('[AGENTS] Tentando enfileirar tarefa:', queuePayload);

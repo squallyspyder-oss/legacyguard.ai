@@ -34,7 +34,10 @@ export function getRedisUrl(): string {
 export function isWorkerEnabled(): boolean {
   console.log('[CONFIG] isWorkerEnabled() chamada');
   try {
+    // Dynamic imports to avoid ESLint warnings about require
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const path = require('path');
 
     const DATA_DIR = path.join(process.cwd(), '.legacyguard');
@@ -65,9 +68,11 @@ export function isWorkerEnabled(): boolean {
   }
 }
 
-export default {
+const configModule = {
   REDIS_URL,
   REDIS_TLS_URL,
   getRedisUrl,
   isWorkerEnabled,
 };
+
+export default configModule;

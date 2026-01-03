@@ -1,14 +1,23 @@
 import OpenAI from 'openai';
-import { Octokit } from 'octokit';
 import path from 'path';
 import { buildGraphFromFiles, searchGraph, loadCodeFiles, CodeFile } from '../lib/indexer';
 import { createPgVectorIndexer } from '../lib/indexer-pgvector';
 import { TwinBuilderResult } from './twin-builder';
 import { LegacyProfile } from '../analyzers/legacy-profiler';
 import { BehaviorClassification } from '../analyzers/behavior-classifier';
+import { LEGACYGUARD_COMPACT_CONTEXT } from '../lib/system-context';
 
 // System prompt detalhado para o Advisor Agent
-const ADVISOR_SYSTEM_PROMPT = `Você é o Advisor Agent do LegacyGuard, especializado em analisar código legado e fornecer recomendações acionáveis.
+const ADVISOR_SYSTEM_PROMPT = `Você é o **Advisor Agent** do LegacyGuard, especializado em analisar código legado e fornecer recomendações acionáveis.
+
+## Contexto do Sistema
+${LEGACYGUARD_COMPACT_CONTEXT}
+
+## Seu Papel
+Você é o agente de análise profunda. Outros agentes podem usar seus findings para tomar decisões.
+- O Orchestrator pode te chamar para avaliar código antes de refatorar
+- O Planner usa seus findings para criar planos de ação
+- O Reviewer compara seus findings com mudanças propostas
 
 RESPONSABILIDADES:
 1. Analisar código e identificar problemas de qualidade, segurança e performance

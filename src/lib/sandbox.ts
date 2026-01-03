@@ -2,12 +2,14 @@
 // Falls back to shell script on Linux when available
 
 import { promisify } from 'util';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let spawn: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let exec: any;
 function ensureChildProcess() {
   if (!spawn || !exec) {
     // Dynamically require to avoid bundlers/edge runtimes pulling in child_process at build time
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const cp = require('child_process');
     spawn = cp.spawn;
     exec = cp.exec;

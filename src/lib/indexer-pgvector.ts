@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import OpenAI from 'openai';
-import { CodeFile, CodeNode, tokenize, extractSymbols } from './indexer';
+import { CodeFile, CodeNode, extractSymbols } from './indexer';
 
 // Config via PGVECTOR_URL (postgresql://user:pass@host:port/db)
 // Requer extensão pgvector instalada no banco: CREATE EXTENSION IF NOT EXISTS vector;

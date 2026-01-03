@@ -12,6 +12,8 @@ const DEFAULT_CONFIG = {
   workerEnabled: false, // Temporariamente desabilitado por causa do Redis
   maskingEnabled: true,
   deepSearch: false,
+  ragReady: true,
+  apiEnabled: false,
 };
 
 function ensureDataDir() {

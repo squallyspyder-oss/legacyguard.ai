@@ -46,6 +46,9 @@ interface ChatContainerProps {
   assistActive: boolean
   onAssistToggle: (active: boolean) => void
   onAssistAction: (step: string) => void
+  // LegacyAssist action execution
+  pendingAssistAction?: string | null
+  onAssistActionConsumed?: () => void
   // Quick action from sidebar
   quickAgentRole?: string | null
   quickPrompt?: string | null
@@ -59,9 +62,11 @@ export default function ChatContainer({
   sidebarCollapsed,
   onToggleSidebar,
   onOpenSettings,
-  assistActive,
+  assistActive: _assistActive,
   onAssistToggle,
-  onAssistAction,
+  onAssistAction: _onAssistAction,
+  pendingAssistAction,
+  onAssistActionConsumed,
   quickAgentRole,
   quickPrompt,
   onQuickActionConsumed,
@@ -158,6 +163,253 @@ export default function ChatContainer({
     }
   }, [agentRole, onAssistToggle])
 
+  // LegacyAssist action handlers
+  const executeLegacyAssistAction = useCallback(async (action: string, context?: string) => {
+    setIsLoading(true)
+    
+    // Adiciona mensagem do usuário indicando a ação
+    const actionLabels: Record<string, string> = {
+      rag: "🔍 Buscar no RAG",
+      web: "🌐 Pesquisar na Web",
+      brainstorm: "💡 Brainstorm",
+      twin: "🧬 Twin Builder",
+      sandbox: "🔒 Executar no Sandbox",
+      orchestrate: "🚀 Orquestrar",
+    }
+    
+    const userMessage: Message = {
+      id: `msg-${Date.now()}-user`,
+      role: "user",
+      content: `${actionLabels[action] || action}${context ? `: ${context}` : ""}`,
+      timestamp: new Date(),
+      agentRole: "legacyAssist",
+    }
+    setMessages((prev) => [...prev, userMessage])
+    
+    try {
+      let response: Message | null = null
+      
+      switch (action) {
+        case "rag": {
+          // Busca no índice RAG
+          const query = context || input || "buscar contexto relevante"
+          const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=5`)
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro no RAG" }))
+            throw new Error(error.error || "Erro ao buscar no RAG")
+          }
+          
+          const data = await res.json()
+          const resultsText = data.results?.length > 0
+            ? data.results.map((r: any, i: number) => `**${i + 1}. ${r.path}**\n\`\`\`${r.language || ''}\n${r.snippet}\n\`\`\``).join("\n\n")
+            : "Nenhum resultado encontrado no índice RAG."
+          
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `## 🔍 Busca RAG\n\n**Query:** "${query}"\n**Resultados:** ${data.count || 0}\n\n${resultsText}`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+          break
+        }
+        
+        case "web": {
+          // Pesquisa web (usa o chat com deepSearch)
+          const query = context || input || "pesquisar informações relevantes"
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              message: `[Web Search] ${query}`,
+              deepSearch: true,
+              context: { mode: "webSearch" }
+            }),
+          })
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro na pesquisa web" }))
+            throw new Error(error.error || "Erro na pesquisa web")
+          }
+          
+          const data = await res.json()
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `## 🌐 Pesquisa Web\n\n${data.reply || "Sem resultados."}`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+          break
+        }
+        
+        case "brainstorm": {
+          // Brainstorm usando chat
+          const query = context || input || "explorar soluções"
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              message: `[Brainstorm] Explore diferentes abordagens e soluções para: ${query}`,
+              deepSearch: false,
+              context: { mode: "brainstorm" }
+            }),
+          })
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro no brainstorm" }))
+            throw new Error(error.error || "Erro no brainstorm")
+          }
+          
+          const data = await res.json()
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `## 💡 Brainstorm\n\n${data.reply || "Sem ideias geradas."}`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+          break
+        }
+        
+        case "twin": {
+          // Twin Builder - aciona orquestração com twin-builder
+          if (!settings.workerEnabled) {
+            throw new Error("Worker desativado. Ative nas configurações para usar o Twin Builder.")
+          }
+          
+          const res = await fetch("/api/agents", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              role: "orchestrate",
+              request: `[Twin Builder] Reproduzir cenário para: ${context || input || "análise"}`,
+              sandbox: { enabled: true, mode: settings.sandboxMode },
+              safeMode: settings.safeMode,
+            }),
+          })
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro no Twin Builder" }))
+            throw new Error(error.error || "Erro ao acionar Twin Builder")
+          }
+          
+          const data = await res.json()
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `## 🧬 Twin Builder\n\n✅ **Cenário iniciado**\n\nID: \`${data.taskId || data.id || "pending"}\`\n\nO Twin Builder está reproduzindo o cenário em ambiente isolado. Acompanhe o progresso.`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+          break
+        }
+        
+        case "sandbox": {
+          // Sandbox - execução isolada
+          if (!settings.workerEnabled) {
+            throw new Error("Worker desativado. Ative nas configurações para usar o Sandbox.")
+          }
+          
+          const res = await fetch("/api/agents", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              role: "executor",
+              payload: {
+                request: `[Sandbox] Executar em ambiente isolado: ${context || input || "teste"}`,
+                sandbox: { enabled: true, mode: "fail" },
+              },
+            }),
+          })
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro no Sandbox" }))
+            throw new Error(error.error || "Erro ao executar no Sandbox")
+          }
+          
+          const data = await res.json()
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `## 🔒 Sandbox\n\n✅ **Execução iniciada**\n\nID: \`${data.taskId || data.id || "pending"}\`\n\nO código está sendo executado em ambiente isolado. Aguarde os resultados.`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+          break
+        }
+        
+        case "orchestrate": {
+          // Orquestração completa
+          if (!settings.workerEnabled) {
+            throw new Error("Worker desativado. Ative nas configurações para usar a Orquestração.")
+          }
+          
+          const res = await fetch("/api/agents", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              role: "orchestrate",
+              request: context || input || "executar plano completo",
+              sandbox: settings.sandboxEnabled ? { enabled: true, mode: settings.sandboxMode } : undefined,
+              safeMode: settings.safeMode,
+            }),
+          })
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro na orquestração" }))
+            throw new Error(error.error || "Erro ao iniciar orquestração")
+          }
+          
+          const data = await res.json()
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `## 🚀 Orquestração\n\n✅ **Plano em execução**\n\nID: \`${data.taskId || data.id || "pending"}\`\n\nO orquestrador está coordenando os agentes. Acompanhe o progresso em tempo real.`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+          break
+        }
+        
+        default:
+          response = {
+            id: `msg-${Date.now()}`,
+            role: "assistant",
+            content: `Ação "${action}" não reconhecida.`,
+            timestamp: new Date(),
+            agentRole: "legacyAssist",
+          }
+      }
+      
+      if (response) {
+        setMessages((prev) => [...prev, response!])
+      }
+    } catch (error: any) {
+      const errorMessage: Message = {
+        id: `msg-${Date.now()}`,
+        role: "assistant",
+        content: `❌ **Erro**: ${error.message}`,
+        timestamp: new Date(),
+        agentRole: "legacyAssist",
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [input, settings])
+
+  // Handle assist overlay actions - executa quando uma ação do LegacyAssist é disparada
+  useEffect(() => {
+    if (pendingAssistAction) {
+      console.log("[ChatContainer] Executing LegacyAssist action:", pendingAssistAction)
+      executeLegacyAssistAction(pendingAssistAction, input)
+      onAssistActionConsumed?.()
+    }
+  }, [pendingAssistAction, executeLegacyAssistAction, input, onAssistActionConsumed])
+
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (isLoading || (!input.trim() && uploadedFiles.length === 0)) return
@@ -182,17 +434,43 @@ export default function ChatContainer({
     setIsLoading(true)
 
     try {
-      // LegacyAssist mode - guided flow (local processing)
+      // LegacyAssist mode - guided flow with real API
       if (agentRole === "legacyAssist") {
-        const roleInfo = AGENT_ROLES.find((r) => r.key === agentRole)
-        const assistantMessage: Message = {
-          id: `msg-${Date.now() + 1}`,
-          role: "assistant",
-          content: buildResponse(userText, agentRole, roleInfo?.label || ""),
-          timestamp: new Date(),
-          agentRole,
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              message: `[LegacyAssist] ${userText}`,
+              deepSearch: settings.deepSearch,
+              context: { mode: "legacyAssist" } 
+            }),
+          })
+          
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({ error: "Erro no servidor" }))
+            throw new Error(error.error || "Erro ao processar LegacyAssist")
+          }
+          
+          const data = await res.json()
+          const assistantMessage: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: "assistant",
+            content: data.reply || "Sem resposta do servidor.",
+            timestamp: new Date(),
+            agentRole,
+          }
+          setMessages((prev) => [...prev, assistantMessage])
+        } catch (error: any) {
+          const errorMessage: Message = {
+            id: `msg-${Date.now() + 1}`,
+            role: "assistant",
+            content: `❌ **Erro**: ${error.message}`,
+            timestamp: new Date(),
+            agentRole,
+          }
+          setMessages((prev) => [...prev, errorMessage])
         }
-        setMessages((prev) => [...prev, assistantMessage])
         setIsLoading(false)
         setUploadedFiles([])
         return
@@ -518,51 +796,4 @@ export default function ChatContainer({
       )}
     </div>
   )
-}
-
-function buildResponse(userText: string, agentRole: string, roleLabel: string): string {
-  const t = userText.toLowerCase()
-
-  if (agentRole === "legacyAssist") {
-    return `## Guia LegacyAssist
-
-Entendi sua solicitacao. Vamos seguir um fluxo estruturado:
-
-**Fase 1 - Entendimento**
-Confirme o contexto: qual repositorio ou sistema estamos analisando?
-
-**Fase 2 - Pesquisa**
-Posso ajudar com:
-- 🔍 **RAG** - Buscar no contexto indexado
-- 🌐 **Web** - Pesquisa externa
-- 💡 **Brainstorm** - Explorar solucoes
-
-**Fase 3 - Validacao**
-Antes de qualquer acao, validaremos com Twin Builder ou Sandbox.
-
-**Qual opcao voce prefere iniciar?**`
-  }
-
-  if (t.includes("incidente") || t.includes("erro")) {
-    return `## Analise de Incidente
-
-Detectei contexto de incidente. Recomendo:
-
-1. **Twin Builder** - Reproduzir o cenario em ambiente isolado
-2. **Analise de logs** - Identificar root cause
-3. **Patch generation** - Sugerir correcoes
-
-Deseja que eu acione o Twin Builder para reproduzir o incidente?`
-  }
-
-  return `## ${roleLabel}
-
-Entendi sua solicitacao. Vou analisar o contexto e preparar uma resposta detalhada.
-
-**Proximos passos:**
-1. Analise do escopo
-2. Identificacao de riscos
-3. Sugestao de acoes
-
-Processando...`
 }

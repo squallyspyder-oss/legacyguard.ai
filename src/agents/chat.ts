@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { estimateCostUSD } from '../lib/pricing';
 import { detectIntent, detectModeChangeRequest, formatSuggestion, type IntentDetectionResult } from '../lib/intent-detector';
+import { buildSystemPrompt, LEGACYGUARD_COMPACT_CONTEXT } from '../lib/system-context';
 
 // Sinais fortes de necessidade de agentes (ação/execução) - legado, mantido para compatibilidade
 const ACTION_REGEX = /(aplica(r)?|patch|pr\b|pull request|merge|deploy|commit|test(e|ar)?|corrig(e|ir)|fix|ajustar|refator|automatiza|executa|rodar? testes|cria(r)? plano|orquestra)/i;
@@ -46,9 +47,31 @@ export async function runChat(input: {
     modeChangeRequest: modeChangeRequest.wantsChange,
   });
 
+  // Sistema de prompts melhorado com contexto completo do LegacyGuard
   const system = input.deep
-    ? `Você é o modo Chat Livre (profundo) do LegacyGuard. Responda de forma objetiva, traga riscos, opções e próximos passos. Quando perceber intenção de execução (patch, PR, merge, testes, deploy), recomende orquestrar agentes.`
-    : `Você é o modo econômico de Chat Livre do LegacyGuard. Seja conciso e barato. Somente orientação; sem passos executáveis. Se detectar necessidade de agentes para patch/PR/merge/testes/refatoração, recomende orquestrar.`;
+    ? buildSystemPrompt({
+        agentName: 'LegacyAssist',
+        agentRole: 'Assistente conversacional principal do LegacyGuard. Você ajuda desenvolvedores a entender, manter e modernizar código legado de forma segura.',
+        mode: 'full',
+        capabilities: [
+          'Responder dúvidas sobre código, arquitetura e boas práticas',
+          'Orientar sobre qual modo/agente usar para cada situação',
+          'Explicar conceitos de refatoração e modernização',
+          'Sugerir estratégias de migração e testes',
+          'Recomendar orquestração quando detectar necessidade de execução',
+        ],
+        additionalContext: input.context ? `Contexto do repositório:\n${input.context}` : undefined,
+      }) + `\n\nQuando perceber intenção de execução (patch, PR, merge, testes, deploy), recomende usar o Orchestrator.`
+    : buildSystemPrompt({
+        agentName: 'LegacyAssist (Modo Econômico)',
+        agentRole: 'Assistente rápido e conciso para dúvidas simples.',
+        mode: 'compact',
+        capabilities: [
+          'Respostas diretas e objetivas',
+          'Orientação básica sem execução',
+          'Encaminhar para modo profundo quando necessário',
+        ],
+      }) + `\n\nSeja conciso. Se detectar necessidade de análise profunda ou execução, sugira mudar de modo.`;
 
   const needsAction = ACTION_REGEX.test(input.message || '');
 

@@ -49,7 +49,8 @@ interface AgentSelectorProps {
 export default function AgentSelector({ value, onChange, showAdvanced: initialShowAdvanced = false }: AgentSelectorProps) {
   const [showAdvanced, setShowAdvanced] = useState(initialShowAdvanced);
   const selected = AGENT_ROLES.find((r) => r.key === value);
-  const primarySelected = PRIMARY_MODES.find((m) => m.key === value);
+  // Used to check if current selection is in primary modes
+  const _primarySelected = PRIMARY_MODES.find((m) => m.key === value);
 
   return (
     <div className="flex flex-col gap-4">

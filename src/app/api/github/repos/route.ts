@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { Octokit } from 'octokit';
 
 export async function GET() {
-  const session = await getServerSession();
-  // @ts-ignore
+  const session = await getServerSession(authOptions);
+  // @ts-expect-error - accessToken não existe no tipo Session padrão
   const accessToken = session?.accessToken as string | undefined;
 
   if (!accessToken) {

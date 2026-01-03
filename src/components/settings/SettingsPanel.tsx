@@ -3,7 +3,8 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { X, Shield, Zap, DollarSign, Info, Check, User, Bell, Keyboard, Settings2, Moon, Sun, Monitor, Database } from "lucide-react"
+import { useSession } from "next-auth/react"
+import { X, Shield, Zap, DollarSign, Info, Check, User, Settings2, Moon, Sun, Monitor, Database } from "lucide-react"
 import type { AppSettings } from "../layout/MainLayout"
 import type { UserSettings } from "../../app/api/user/settings/route"
 
@@ -51,25 +52,52 @@ const defaultUserSettings: UserSettings = {
 }
 
 export default function SettingsPanel({ isOpen, onClose, settings, onUpdateSettings }: SettingsPanelProps) {
+  const { data: session, status } = useSession()
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile")
   const [userSettings, setUserSettings] = useState<UserSettings>(defaultUserSettings)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
+  // Update authentication status based on session
+  useEffect(() => {
+    console.log('[SettingsPanel] Session status:', status, 'User:', session?.user?.email)
+    if (status === 'authenticated' && session?.user) {
+      console.log('[SettingsPanel] Setting authenticated=true, user:', session.user.name)
+      setIsAuthenticated(true)
+      // Pre-populate from session
+      setUserSettings(prev => ({
+        ...prev,
+        displayName: prev.displayName || session.user?.name || '',
+        email: session.user?.email || '',
+        avatarUrl: session.user?.image || undefined,
+      }))
+    } else if (status === 'unauthenticated') {
+      console.log('[SettingsPanel] Setting authenticated=false')
+      setIsAuthenticated(false)
+    }
+  }, [session, status])
+
   // Load user settings on mount
   useEffect(() => {
     if (isOpen) {
+      console.log('[SettingsPanel] Fetching /api/user/settings...')
       fetch('/api/user/settings')
         .then(res => res.json())
         .then(data => {
+          console.log('[SettingsPanel] API response:', data)
           if (data.settings) {
             setUserSettings(data.settings)
-            setIsAuthenticated(data.authenticated)
+            // Trust client-side session for auth status
+            if (status === 'authenticated') {
+              setIsAuthenticated(true)
+            } else {
+              setIsAuthenticated(data.authenticated)
+            }
           }
         })
-        .catch(console.error)
+        .catch(err => console.error('[SettingsPanel] Error:', err))
     }
-  }, [isOpen])
+  }, [isOpen, status])
 
   const updateUserSettings = async (updates: Partial<UserSettings>) => {
     const newSettings = { ...userSettings, ...updates }

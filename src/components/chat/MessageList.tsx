@@ -36,7 +36,7 @@ export default function MessageList({ messages, isLoading, onSwitchAgent }: Mess
   )
 }
 
-function MessageBubble({ message, index, onSwitchAgent }: { message: Message; index: number; onSwitchAgent?: (agent: string, prompt?: string) => void }) {
+function MessageBubble({ message, index: _index, onSwitchAgent }: { message: Message; index: number; onSwitchAgent?: (agent: string, prompt?: string) => void }) {
   const isUser = message.role === "user"
   const [copied, setCopied] = useState(false)
 
@@ -235,7 +235,6 @@ function FormattedContent({ content, onLinkClick }: { content: string; onLinkCli
 function formatInlineText(text: string, onLinkClick?: (href: string) => void) {
   // Links markdown [text](url)
   const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
-  const boldRegex = /\*\*(.*?)\*\*/g
   
   // Primeiro, processa links
   if (linkRegex.test(text)) {

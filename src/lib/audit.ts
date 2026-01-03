@@ -127,45 +127,118 @@ export function getAuditStorageStatus(): { persistent: boolean; warning?: string
 async function ensureSchema() {
   const client = getPool();
   if (!client) return; // modo memória
-  await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS audit_repos (
-      id SERIAL PRIMARY KEY,
-      provider TEXT NOT NULL DEFAULT 'github',
-      owner TEXT NOT NULL,
-      repo TEXT NOT NULL,
-      default_branch TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (provider, owner, repo)
-    );
+  
+  try {
+    await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+    
+    // Criar tabela de repos primeiro
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS audit_repos (
+        id SERIAL PRIMARY KEY,
+        provider TEXT NOT NULL DEFAULT 'github',
+        owner TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        default_branch TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (provider, owner, repo)
+      );
+    `);
+    
+    // Criar tabela de logs (estrutura básica)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        action TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    
+    // Adicionar colunas que podem estar faltando (migrações)
+    await client.query(`
+      DO $$
+      BEGIN
+        -- Adicionar repo_id
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'repo_id') THEN
+          ALTER TABLE audit_logs ADD COLUMN repo_id INTEGER REFERENCES audit_repos(id) ON DELETE SET NULL;
+        END IF;
+        -- Adicionar actor
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'actor') THEN
+          ALTER TABLE audit_logs ADD COLUMN actor TEXT;
+        END IF;
+        -- Adicionar severity
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'severity') THEN
+          ALTER TABLE audit_logs ADD COLUMN severity TEXT NOT NULL DEFAULT 'info';
+        END IF;
+        -- Adicionar message
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'message') THEN
+          ALTER TABLE audit_logs ADD COLUMN message TEXT;
+        END IF;
+        -- Adicionar metadata
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'metadata') THEN
+          ALTER TABLE audit_logs ADD COLUMN metadata JSONB;
+        END IF;
+        -- Remover NOT NULL constraint de session_id se existir
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'session_id') THEN
+          ALTER TABLE audit_logs ALTER COLUMN session_id DROP NOT NULL;
+        END IF;
+      END $$;
+    `);
 
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id BIGSERIAL PRIMARY KEY,
-      repo_id INTEGER REFERENCES audit_repos(id) ON DELETE SET NULL,
-      actor TEXT,
-      action TEXT NOT NULL,
-      severity TEXT NOT NULL DEFAULT 'info',
-      message TEXT,
-      metadata JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
+    // Criar tabela de artifacts
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS audit_artifacts (
+        id BIGSERIAL PRIMARY KEY,
+        kind TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    
+    // Adicionar colunas em artifacts que podem estar faltando
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_artifacts' AND column_name = 'repo_id') THEN
+          ALTER TABLE audit_artifacts ADD COLUMN repo_id INTEGER REFERENCES audit_repos(id) ON DELETE SET NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_artifacts' AND column_name = 'log_id') THEN
+          ALTER TABLE audit_artifacts ADD COLUMN log_id BIGINT REFERENCES audit_logs(id) ON DELETE CASCADE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_artifacts' AND column_name = 'storage_url') THEN
+          ALTER TABLE audit_artifacts ADD COLUMN storage_url TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_artifacts' AND column_name = 'checksum') THEN
+          ALTER TABLE audit_artifacts ADD COLUMN checksum TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_artifacts' AND column_name = 'size_bytes') THEN
+          ALTER TABLE audit_artifacts ADD COLUMN size_bytes BIGINT;
+        END IF;
+      END $$;
+    `);
 
-    CREATE TABLE IF NOT EXISTS audit_artifacts (
-      id BIGSERIAL PRIMARY KEY,
-      repo_id INTEGER REFERENCES audit_repos(id) ON DELETE SET NULL,
-      log_id BIGINT REFERENCES audit_logs(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL,
-      storage_url TEXT,
-      checksum TEXT,
-      size_bytes BIGINT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_audit_logs_repo_created_at ON audit_logs (repo_id, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action);
-    CREATE INDEX IF NOT EXISTS idx_audit_artifacts_repo_created_at ON audit_artifacts (repo_id, created_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_repos_provider_owner_repo ON audit_repos (provider, owner, repo);
-  `);
+    // Criar índices (com verificação de existência de colunas)
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'repo_id') THEN
+          CREATE INDEX IF NOT EXISTS idx_audit_logs_repo_created_at ON audit_logs (repo_id, created_at DESC);
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'action') THEN
+          CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action);
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_artifacts' AND column_name = 'repo_id') THEN
+          CREATE INDEX IF NOT EXISTS idx_audit_artifacts_repo_created_at ON audit_artifacts (repo_id, created_at DESC);
+        END IF;
+      END $$;
+    `);
+    
+    // Índice único para repos
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_repos_provider_owner_repo ON audit_repos (provider, owner, repo);
+    `);
+  } catch (error) {
+    console.error('[AUDIT] Schema migration error:', error);
+    // Não propagar o erro - deixar o sistema funcionar mesmo sem persistência completa
+  }
 }
 
 async function upsertRepo(repo?: AuditRepo): Promise<number | null> {

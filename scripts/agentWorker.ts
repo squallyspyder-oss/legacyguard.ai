@@ -1,20 +1,17 @@
 import {
-  connectRedis,
   ensureGroup,
   readGroup,
   ack,
   enqueueTask,
   requeueForRetry,
   getRetryInfo,
-  readPending,
-  DLQ_STREAM,
   DEFAULT_RETRY_CONFIG,
 } from '../src/lib/queue';
 import { runAdvisor } from '../src/agents/advisor';
 import { runOperator } from '../src/agents/operator';
 import { runExecutor } from '../src/agents/executor';
 import { runReviewer } from '../src/agents/reviewer';
-import { createOrchestrator, OrchestrationState } from '../src/agents/orchestrator';
+import { createOrchestrator } from '../src/agents/orchestrator';
 import { consumeReservation, refundReservation } from '../src/lib/quotas';
 import { logBootDiagnostics } from '../src/lib/boot';
 

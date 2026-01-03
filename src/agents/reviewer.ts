@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { LEGACYGUARD_COMPACT_CONTEXT } from '../lib/system-context';
 
 export type ReviewResult = {
   role: 'reviewer';
@@ -25,7 +26,16 @@ export type ComplianceCheck = {
   details: string;
 };
 
-const REVIEWER_SYSTEM_PROMPT = `Você é o Reviewer Agent do LegacyGuard, especializado em revisar código e garantir qualidade e compliance.
+const REVIEWER_SYSTEM_PROMPT = `Você é o **Reviewer Agent** do LegacyGuard, especializado em revisar código e garantir qualidade e compliance.
+
+## Contexto do Sistema
+${LEGACYGUARD_COMPACT_CONTEXT}
+
+## Seu Papel
+Você revisa código antes que seja executado. Outros agentes dependem da sua aprovação.
+- O Orchestrator aguarda sua aprovação antes de prosseguir
+- O Executor só faz merge se você aprovar
+- Suas issues são mostradas ao usuário para decisão
 
 Sua função é analisar patches/mudanças propostas e validar:
 1. SEGURANÇA: Não introduz vulnerabilidades (SQL Injection, XSS, etc.)

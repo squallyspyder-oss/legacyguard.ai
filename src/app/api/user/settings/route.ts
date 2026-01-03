@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import fs from 'fs';
 import path from 'path';
 
@@ -129,10 +130,19 @@ function writeUserSettings(userId: string, settings: UserSettings) {
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession();
-    const email = session?.user?.email;
+    const session = await getServerSession(authOptions);
+    console.log('[user-settings] Session:', JSON.stringify(session, null, 2));
     
-    if (!email) {
+    // Use email or fallback to name-based ID
+    const email = session?.user?.email;
+    const name = session?.user?.name;
+    const image = session?.user?.image;
+    
+    // Consider authenticated if we have any user info
+    const hasUser = !!(email || name);
+    
+    if (!hasUser) {
+      console.log('[user-settings] No user info found, returning anonymous');
       // Return defaults for anonymous users
       return NextResponse.json({ 
         settings: defaultUserSettings,
@@ -140,14 +150,18 @@ export async function GET(req: NextRequest) {
       });
     }
     
-    const userId = sanitizeUserId(email);
+    // Use email if available, otherwise create ID from name
+    const userId = sanitizeUserId(email || name || 'anonymous');
+    console.log('[user-settings] Authenticated user:', userId);
+    
     const settings = readUserSettings(userId);
     
     // Update with session info
-    settings.email = email;
-    settings.displayName = settings.displayName || session?.user?.name || email.split('@')[0];
-    settings.avatarUrl = settings.avatarUrl || session?.user?.image || undefined;
+    settings.email = email || '';
+    settings.displayName = settings.displayName || name || email?.split('@')[0] || '';
+    settings.avatarUrl = settings.avatarUrl || image || undefined;
     
+    console.log('[user-settings] Returning settings for:', userId);
     return NextResponse.json({ 
       settings,
       authenticated: true 
@@ -164,7 +178,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession();
+    const session = await getServerSession(authOptions);
     const email = session?.user?.email;
     
     if (!email) {
@@ -208,7 +222,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const session = await getServerSession();
+    const session = await getServerSession(authOptions);
     const email = session?.user?.email;
     
     if (!email) {

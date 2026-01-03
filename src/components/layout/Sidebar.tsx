@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState } from "react"
-import { signIn, signOut } from "next-auth/react"
+import { signOut } from "next-auth/react"
 import type { Session } from "next-auth"
 import {
   History,
@@ -19,7 +19,6 @@ import {
   HelpCircle,
   MoreHorizontal,
   GitBranch,
-  FolderOpen,
 } from "lucide-react"
 import type { AppSettings, SessionItem } from "./MainLayout"
 import ImportRepoModal from "../repo/ImportRepoModal"
@@ -48,7 +47,7 @@ export default function Sidebar({
   isCollapsed,
   isMobile,
   onToggle,
-  onClose,
+  onClose: _onClose,
   session,
   sessions,
   sessionsLoading,

@@ -106,14 +106,14 @@ export default function ChatInput({
         <div className="glass rounded-2xl overflow-hidden shadow-lg">
           {/* Agent selector row */}
           {!compact && (
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border/50">
-              <div className="relative">
+            <div className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-border/50 overflow-x-auto scrollbar-hide">
+              <div className="relative flex-shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowAgentMenu(!showAgentMenu)}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg
+                  className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-lg
                            bg-secondary/50 hover:bg-secondary
-                           text-sm transition-colors"
+                           text-xs sm:text-sm transition-colors whitespace-nowrap"
                 >
                   <span className="text-primary">{roleIcons[agentRole]}</span>
                   <span className="font-medium">{selectedRole?.label.split(" — ")[0]}</span>
@@ -126,9 +126,9 @@ export default function ChatInput({
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowAgentMenu(false)} />
                     <div
-                      className="absolute top-full left-0 mt-2 w-80 p-2
+                      className="absolute top-full left-0 mt-2 w-72 sm:w-80 p-2
                                 bg-popover border border-border rounded-xl shadow-2xl z-50
-                                animate-scale-in origin-top-left"
+                                animate-scale-in origin-top-left max-h-[60vh] overflow-y-auto"
                     >
                       {AGENT_ROLES.map((role) => (
                         <button
@@ -165,8 +165,8 @@ export default function ChatInput({
                 <button
                   type="button"
                   onClick={() => onDeepSearchChange(!deepSearch)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg
-                            text-sm transition-all duration-200 ${
+                  className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg
+                            text-xs sm:text-sm transition-all duration-200 flex-shrink-0 ${
                               deepSearch
                                 ? "bg-primary/20 text-primary border border-primary/30"
                                 : "bg-secondary/50 hover:bg-secondary text-muted-foreground"
@@ -251,11 +251,11 @@ export default function ChatInput({
 
           {showAgentMenu && (
             <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowAgentMenu(false)} />
+              <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setShowAgentMenu(false)} />
               <div
-                className="fixed bottom-24 left-1/2 -translate-x-1/2 w-80 p-2
+                className="fixed bottom-24 left-4 right-4 sm:left-1/2 sm:-translate-x-1/2 sm:right-auto sm:w-80 p-2
                           bg-popover border border-border rounded-xl shadow-2xl z-50
-                          animate-scale-in"
+                          animate-scale-in max-h-[60vh] overflow-y-auto"
               >
                 {AGENT_ROLES.map((role) => (
                   <button

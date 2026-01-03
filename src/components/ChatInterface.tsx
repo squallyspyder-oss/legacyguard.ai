@@ -6,6 +6,7 @@ import ReactDiffViewer from 'react-diff-viewer-continued';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import AgentSelector, { AGENT_ROLES } from './AgentSelector';
 import SettingsSidebar from './SettingsSidebar';
+import { GuardianFlowProvider, useGuardianFlow } from '@/guardian-flow';
 
 type SessionItem = {
   id: string;
@@ -78,6 +79,10 @@ export default function ChatInterface() {
   // LegacyAssist (modo guiado)
   const [assistOnboardingSeen, setAssistOnboardingSeen] = useState(false);
   const [showAssistModal, setShowAssistModal] = useState(false);
+  
+  // Guardian Flow integration
+  const [showGuardianFlow, setShowGuardianFlow] = useState(false);
+  const [guardianFlowIntent, setGuardianFlowIntent] = useState('');
   const [assistMetrics, setAssistMetrics] = useState({
     stepsCompleted: 0,
     researches: 0,
@@ -1055,13 +1060,28 @@ export default function ChatInterface() {
 
                       {msg.role === 'assistant' && msg.suggestOrchestrateText && (
                         <div className="mt-4 p-3 rounded-lg border border-emerald-400/40 bg-emerald-500/10">
-                          <p className="text-sm text-emerald-100 font-semibold mb-2">Esta solicitação parece exigir agentes. Quer orquestrar?</p>
-                          <button
-                            onClick={() => handleOrchestrate(msg.suggestOrchestrateText!, { files: uploadedFiles.map(f => f.name) })}
-                            className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold"
-                          >
-                            Iniciar Orquestração
-                          </button>
+                          <p className="text-sm text-emerald-100 font-semibold mb-2">Esta solicitação parece exigir agentes. Escolha como prosseguir:</p>
+                          <div className="flex gap-2 flex-wrap">
+                            <button
+                              onClick={() => handleOrchestrate(msg.suggestOrchestrateText!, { files: uploadedFiles.map(f => f.name) })}
+                              className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold"
+                            >
+                              🎭 Orquestração Clássica
+                            </button>
+                            <button
+                              onClick={() => {
+                                setGuardianFlowIntent(msg.suggestOrchestrateText!);
+                                setShowGuardianFlow(true);
+                              }}
+                              className="px-4 py-2 rounded-lg bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-400 hover:to-purple-400 text-white font-semibold flex items-center gap-2"
+                            >
+                              🛡️ Guardian Flow
+                              <span className="text-xs bg-white/20 px-1.5 py-0.5 rounded">NOVO</span>
+                            </button>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-2">
+                            Guardian Flow: execução segura com safety gates, LOA automático e gamificação.
+                          </p>
                         </div>
                       )}
                     </div>
@@ -1317,6 +1337,211 @@ export default function ChatInterface() {
           </div>
         </div>
       )}
+
+      {/* Guardian Flow Modal */}
+      {showGuardianFlow && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4" onClick={() => setShowGuardianFlow(false)}>
+          <div className="bg-slate-900 rounded-xl max-w-5xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-violet-500/30" onClick={(e) => e.stopPropagation()}>
+            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-gradient-to-r from-violet-500/20 to-purple-500/20">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🛡️</span>
+                <div>
+                  <h2 className="text-xl font-bold text-white">Guardian Flow</h2>
+                  <p className="text-xs text-slate-400">Execução segura com safety gates e LOA automático</p>
+                </div>
+              </div>
+              <button onClick={() => setShowGuardianFlow(false)} className="text-2xl text-slate-300 hover:text-white">&times;</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <GuardianFlowProvider>
+                <GuardianFlowEmbed 
+                  intent={guardianFlowIntent} 
+                  onComplete={(result) => {
+                    setShowGuardianFlow(false);
+                    if (result.success) {
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `✅ **Guardian Flow concluído!**\n\n${result.output || 'Operação executada com sucesso.'}\n\n🎮 XP: +${result.xpGained || 50} | Rollback ID: \`${result.rollbackId || 'N/A'}\``
+                      }]);
+                    } else {
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `⚠️ **Guardian Flow bloqueado**\n\n${result.reason || 'Operação não permitida pelos safety gates.'}`
+                      }]);
+                    }
+                  }}
+                  onCancel={() => setShowGuardianFlow(false)}
+                />
+              </GuardianFlowProvider>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Guardian Flow Embed Component
+function GuardianFlowEmbed({ 
+  intent, 
+  onComplete, 
+  onCancel 
+}: { 
+  intent: string; 
+  onComplete: (result: { success: boolean; output?: string; reason?: string; xpGained?: number; rollbackId?: string }) => void;
+  onCancel: () => void;
+}) {
+  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+  const [events, setEvents] = useState<any[]>([]);
+  const [loaLevel, setLoaLevel] = useState(2);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleStartFlow = async () => {
+    setStatus('running');
+    setEvents([]);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/guardian-flow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent, loaLevel }),
+      });
+
+      const data = await res.json();
+      setEvents(data.events || []);
+
+      if (data.status === 'completed') {
+        setStatus('completed');
+        onComplete({
+          success: true,
+          output: data.result?.output,
+          xpGained: 50, // Base XP
+          rollbackId: data.result?.rollbackId,
+        });
+      } else {
+        setStatus('failed');
+        setError(data.error?.message || 'Flow failed');
+        onComplete({
+          success: false,
+          reason: data.error?.message,
+        });
+      }
+    } catch (err: any) {
+      setStatus('failed');
+      setError(err.message || 'Erro de conexão');
+    }
+  };
+
+  const loaDescriptions: Record<number, { label: string; color: string; risk: string }> = {
+    1: { label: 'Automático', color: 'text-green-400', risk: '🟢 Baixo' },
+    2: { label: 'Revisão', color: 'text-yellow-400', risk: '🟡 Médio' },
+    3: { label: 'Comando', color: 'text-orange-400', risk: '🔴 Alto' },
+    4: { label: 'Manual', color: 'text-red-400', risk: '⚫ Crítico' },
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Intent Display */}
+      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+        <label className="text-xs text-slate-400 uppercase tracking-wider">Intenção Detectada</label>
+        <p className="text-white font-medium mt-1">{intent}</p>
+      </div>
+
+      {/* LOA Selector */}
+      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+        <label className="text-xs text-slate-400 uppercase tracking-wider">Nível de Automação (LOA)</label>
+        <div className="flex gap-2 mt-2">
+          {[1, 2, 3, 4].map((level) => (
+            <button
+              key={level}
+              onClick={() => setLoaLevel(level)}
+              className={`flex-1 py-2 px-3 rounded-lg border transition-all ${
+                loaLevel === level
+                  ? 'bg-violet-500/30 border-violet-500 text-white'
+                  : 'bg-slate-700/50 border-slate-600 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              <div className={`font-bold ${loaDescriptions[level].color}`}>LOA {level}</div>
+              <div className="text-xs text-slate-400">{loaDescriptions[level].label}</div>
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-slate-500 mt-2">
+          Risco selecionado: {loaDescriptions[loaLevel].risk} - {loaDescriptions[loaLevel].label}
+        </p>
+      </div>
+
+      {/* Safety Gates Preview */}
+      <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+        <label className="text-xs text-slate-400 uppercase tracking-wider">Safety Gates Ativos</label>
+        <div className="flex flex-wrap gap-2 mt-2">
+          {['Intent Validation', 'Blast Radius', 'Deterministic Check', 'Security Scan', loaLevel >= 2 ? 'Human Approval' : null]
+            .filter(Boolean)
+            .map((gate, i) => (
+              <span key={i} className="px-2 py-1 bg-emerald-500/20 text-emerald-300 text-xs rounded-full border border-emerald-500/30">
+                ✓ {gate}
+              </span>
+            ))}
+        </div>
+      </div>
+
+      {/* Events Timeline */}
+      {events.length > 0 && (
+        <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+          <label className="text-xs text-slate-400 uppercase tracking-wider">Timeline de Eventos</label>
+          <div className="mt-2 space-y-2 max-h-40 overflow-auto">
+            {events.map((event, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm">
+                <span className={`w-2 h-2 rounded-full ${
+                  event.type.includes('failed') ? 'bg-red-500' :
+                  event.type.includes('passed') || event.type.includes('completed') ? 'bg-green-500' :
+                  'bg-blue-500'
+                }`} />
+                <span className="text-slate-300">{event.type.replace(/_/g, ' ')}</span>
+                <span className="text-xs text-slate-500 ml-auto">
+                  {new Date(event.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-4 text-red-300">
+          <p className="font-medium">❌ Erro</p>
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-3 pt-4 border-t border-slate-700">
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300"
+        >
+          Cancelar
+        </button>
+        <button
+          onClick={handleStartFlow}
+          disabled={status === 'running'}
+          className="flex-1 px-4 py-2 bg-gradient-to-r from-violet-500 to-purple-500 hover:from-violet-400 hover:to-purple-400 rounded-lg text-white font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {status === 'running' ? (
+            <>
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Executando...
+            </>
+          ) : (
+            <>🛡️ Iniciar Guardian Flow</>
+          )}
+        </button>
+      </div>
     </div>
   );
 }

@@ -76,11 +76,8 @@ const ASSIST_STEPS: Record<
 
 export default function LegacyAssistOverlay({ step, onClose, onAction }: LegacyAssistOverlayProps) {
   const [currentStep, setCurrentStep] = useState(step)
-  const [isVisible, setIsVisible] = useState(false)
-
-  useEffect(() => {
-    setIsVisible(true)
-  }, [])
+  // Initialize as true to avoid setState in useEffect anti-pattern
+  const [isVisible] = useState(true)
 
   const stepData = ASSIST_STEPS[currentStep] || ASSIST_STEPS.welcome
 

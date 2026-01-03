@@ -1,10 +1,19 @@
 import { Octokit } from 'octokit';
-import OpenAI from 'openai';
 import { TwinBuilderResult } from './twin-builder';
 import { logEvent } from '../lib/audit';
+import { LEGACYGUARD_COMPACT_CONTEXT } from '../lib/system-context';
 
-// System prompt para o Executor Agent
-const EXECUTOR_SYSTEM_PROMPT = `Você é o Executor Agent do LegacyGuard, responsável por ações privilegiadas como merge de PRs e deploy.
+// System prompt para o Executor Agent (usado para futura expansão com LLM)
+const _EXECUTOR_SYSTEM_PROMPT = `Você é o **Executor Agent** do LegacyGuard, responsável por ações privilegiadas como merge de PRs e deploy.
+
+## Contexto do Sistema
+${LEGACYGUARD_COMPACT_CONTEXT}
+
+## Seu Papel
+Você é o último agente na cadeia - executa ações irreversíveis.
+- Só executa após aprovação do Reviewer
+- Só executa após aprovação humana para risco alto
+- Sempre tem rollback plan pronto
 
 RESPONSABILIDADES:
 1. Validar que PR passou por review antes do merge

@@ -8,7 +8,7 @@ import os from 'os';
 
 function getExecSync() {
   // Dynamically require to avoid bundling child_process in edge/SSR builds
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require('child_process').execSync;
 }
 

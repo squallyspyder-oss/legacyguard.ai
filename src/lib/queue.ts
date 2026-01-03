@@ -61,6 +61,11 @@ export function disconnectRedis() {
   }
 }
 
+// Expor cliente Redis para uso externo (persistência de estado, etc.)
+export function getRedis(): Redis | null {
+  return redisClient || connectRedis();
+}
+
 // ============ Stream operations ============
 
 /** Ensure a consumer group exists for a stream. */

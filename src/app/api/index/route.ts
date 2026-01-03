@@ -4,6 +4,7 @@ import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { getRAGIndexer, type CodeFile } from '@/lib/rag-indexer';
 
 const execAsync = promisify(exec);
@@ -229,8 +230,8 @@ export async function POST(req: NextRequest) {
 
     // GitHub clone using authenticated session (lists come from /api/github/repos)
     if (action === 'clone-github') {
-      const session = await getServerSession();
-      // @ts-ignore
+      const session = await getServerSession(authOptions);
+      // @ts-expect-error - accessToken não existe no tipo Session padrão
       const accessToken = session?.accessToken as string | undefined;
       if (!accessToken) {
         return NextResponse.json({ error: 'Não autenticado no GitHub' }, { status: 401 });

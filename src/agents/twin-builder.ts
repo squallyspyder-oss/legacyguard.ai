@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import fssync from 'fs';
 function getExecFile() {
   // Dynamically require to avoid bundling child_process in serverless/edge builds
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require('child_process').execFile;
 }
 import { emitSandboxLog } from '../lib/sandbox-logs';
@@ -12,6 +12,10 @@ import { logEvent } from '../lib/audit';
 import { profileLegacyRepo, LegacyProfile } from '../analyzers/legacy-profiler';
 import { classifyBehavior, BehaviorClassification } from '../analyzers/behavior-classifier';
 import { generateHarness, HarnessPack } from '../analyzers/harness-generator';
+
+// Twin Builder: Cria "digital twins" de incidentes para reprodução controlada
+// Este agente é fundamental para debug de bugs complexos no LegacyGuard.
+// Ele gera fixtures sintéticas, harness de testes e reproduz cenários em sandbox.
 
 export type IncidentAlert = {
   id: string;

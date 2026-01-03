@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import { connectRedis } from '../../../../lib/queue';
 
 // SSE endpoint para receber atualizações em tempo real

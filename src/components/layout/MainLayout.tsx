@@ -35,7 +35,7 @@ const defaultSettings: AppSettings = {
   maskingEnabled: true,
   workerEnabled: true,
   apiEnabled: false,
-  ragReady: false,
+  ragReady: true,
   deepSearch: false,
   billingCap: 20,
   tokenCap: 12000,
@@ -64,6 +64,7 @@ export default function MainLayout() {
   // LegacyAssist state
   const [assistActive, setAssistActive] = useState(false)
   const [assistStep, setAssistStep] = useState<string | null>(null)
+  const [pendingAssistAction, setPendingAssistAction] = useState<string | null>(null)
 
   // Quick action from sidebar -> ChatContainer
   const [quickAgentRole, setQuickAgentRole] = useState<string | null>(null)
@@ -151,6 +152,8 @@ export default function MainLayout() {
               workerEnabled: cfg.workerEnabled ?? prev.workerEnabled,
               maskingEnabled: cfg.maskingEnabled ?? prev.maskingEnabled,
               deepSearch: cfg.deepSearch ?? prev.deepSearch,
+              apiEnabled: cfg.apiEnabled ?? prev.apiEnabled,
+              ragReady: cfg.ragReady ?? prev.ragReady,
             };
             console.log('[FRONTEND] Novas configurações aplicadas:', newSettings);
             console.log('[FRONTEND] workerEnabled final:', newSettings.workerEnabled);
@@ -184,7 +187,15 @@ export default function MainLayout() {
   )
 
   const handleAssistAction = useCallback((step: string) => {
-    setAssistStep(step)
+    // Ações específicas do LegacyAssist (rag, web, brainstorm, twin, sandbox, orchestrate)
+    const actionIds = ["rag", "web", "brainstorm", "twin", "sandbox", "orchestrate"]
+    if (actionIds.includes(step)) {
+      // Dispara a ação para o ChatContainer executar
+      setPendingAssistAction(step)
+    } else {
+      // Apenas muda o step do overlay
+      setAssistStep(step)
+    }
   }, [])
 
   const toggleSidebar = useCallback(() => {
@@ -236,6 +247,8 @@ export default function MainLayout() {
           assistActive={assistActive}
           onAssistToggle={setAssistActive}
           onAssistAction={handleAssistAction}
+          pendingAssistAction={pendingAssistAction}
+          onAssistActionConsumed={() => setPendingAssistAction(null)}
           quickAgentRole={quickAgentRole}
           quickPrompt={quickPrompt}
           onQuickActionConsumed={() => { setQuickAgentRole(null); setQuickPrompt(null); }}

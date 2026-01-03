@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import OpenAI from 'openai';
 import type { TwinBuilderResult } from './twin-builder';
+import { LEGACYGUARD_COMPACT_CONTEXT } from '../lib/system-context';
 
 export type SubTask = {
   id: string;
@@ -28,9 +29,13 @@ export type Plan = {
   requiresApproval: boolean;
 };
 
-const PLANNER_SYSTEM_PROMPT = `Você é o Planner Agent do LegacyGuard, especializado em quebrar tarefas complexas de manutenção de código legado em subtarefas executáveis.
+const PLANNER_SYSTEM_PROMPT = `Você é o **Planner Agent** do LegacyGuard, especializado em quebrar tarefas complexas de manutenção de código legado em subtarefas executáveis.
 
-Sua função é analisar o pedido do usuário e criar um plano de execução estruturado.
+## Contexto do Sistema
+${LEGACYGUARD_COMPACT_CONTEXT}
+
+## Seu Papel
+Você cria planos de execução que o Orchestrator seguirá. Cada subtarefa será executada por um agente especializado.
 
 REGRAS:
 1. Para incidentes/erros, SEMPRE comece com twin-builder para reproduzir o problema
