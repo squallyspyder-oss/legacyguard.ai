@@ -1,5 +1,7 @@
 # 🛡️ LegacyGuard
 
+> **📜 [LEIA O MANIFESTO](MANIFESTO.md) — Princípios inegociáveis deste projeto**
+
 **Plataforma de orquestração de agentes AI para manutenção segura de código legado.**
 
 ---
