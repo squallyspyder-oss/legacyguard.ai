@@ -3,13 +3,17 @@ import crypto from 'crypto';
 import { indexRepo as indexRepoPgVector, isVectorIndexingEnabled } from '@/lib/indexer-pgvector';
 import { logEvent } from '@/lib/audit';
 
-const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
-
 // Eventos que disparam re-indexação
 const INDEXABLE_EVENTS = ['push', 'release', 'workflow_run'];
 
-function verifySignature(payload: string, signature: string | null): boolean {
-  if (!WEBHOOK_SECRET) {
+function getWebhookSecret(): string | undefined {
+  return process.env.GITHUB_WEBHOOK_SECRET;
+}
+
+export function verifySignature(payload: string, signature: string | null, secretFromCall?: string | null): boolean {
+  const secret = secretFromCall ?? getWebhookSecret();
+
+  if (!secret) {
     console.warn('[webhook] GITHUB_WEBHOOK_SECRET não configurado - assinatura não verificada');
     return true; // Em dev, permitir sem assinatura
   }
@@ -19,9 +23,14 @@ function verifySignature(payload: string, signature: string | null): boolean {
   }
   
   const expected = `sha256=${crypto
-    .createHmac('sha256', WEBHOOK_SECRET)
+    .createHmac('sha256', secret)
     .update(payload)
     .digest('hex')}`;
+  
+  // Evitar RangeError de timingSafeEqual se tamanhos diferirem
+  if (signature.length !== expected.length) {
+    return false;
+  }
   
   return crypto.timingSafeEqual(
     Buffer.from(signature),

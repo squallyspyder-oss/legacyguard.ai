@@ -78,6 +78,24 @@ function log(taskId: string, message: string, scope: 'sandbox' | 'orchestrator' 
 const CLONED_REPOS_DIR = path.join(process.cwd(), '.legacyguard', 'cloned-repos');
 
 /**
+ * Verifica se o git está disponível no ambiente antes de clonar.
+ */
+async function ensureGitAvailable(taskId: string): Promise<void> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      getExecFile()('git', ['--version'], { timeout: 10_000 }, (err: Error | null) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(taskId, `git não disponível: ${errorMsg}`);
+    throw new Error('git não encontrado ou inacessível. Não é possível clonar repositório.');
+  }
+}
+
+/**
  * Clona repositório remoto para uso local pelo Twin Builder.
  * Suporta GitHub URLs com autenticação via GITHUB_TOKEN.
  * 
@@ -93,6 +111,8 @@ async function cloneRepository(
   commit: string | undefined,
   taskId: string
 ): Promise<string> {
+  await ensureGitAvailable(taskId);
+
   // Normalizar URL do repositório
   let normalizedUrl = repoUrl;
   
@@ -387,10 +407,10 @@ export async function buildIncidentTwin(input: TwinBuilderInput): Promise<TwinBu
   }).catch(() => undefined);
 
   // Cleanup de repo clonado após sucesso
-  // NOTA: Não removemos imediatamente para permitir debug posterior
-  // O cleanup pode ser feito manualmente ou via cron job
-  // Se quiser cleanup automático, descomentar:
-  // if (wasCloned) await cleanupClonedRepo(repoPath, taskId);
+  const keepCloned = process.env.LEGACYGUARD_KEEP_CLONED_REPOS === 'true';
+  if (wasCloned && !keepCloned) {
+    await cleanupClonedRepo(repoPath, taskId);
+  }
 
   return {
     twinId,
