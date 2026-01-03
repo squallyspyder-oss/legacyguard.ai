@@ -393,10 +393,12 @@ return NextResponse.json({
 ### P3 - BAIXA (Melhorias Futuras)
 
 1. **Roles RBAC configuráveis por tenant**
-2. **Audit de permission denied**
-3. ~~**Clone automático de repo para Twin Builder**~~ ✅ IMPLEMENTADO
-4. **Teste E2E com Docker real em CI**
-5. **Hierarquia flexível de permissions**
+2. **Teste E2E com Docker real em CI**
+3. **Hierarquia flexível de permissions**
+4. **Rate limit / anti-replay no webhook de indexação**
+5. **Política de retenção/TTL para repositórios clonados (Twin Builder)**
+6. **Teste de integração clone → twin-builder → sandbox**
+7. **Obrigatoriedade do GITHUB_WEBHOOK_SECRET em produção (fail closed)**
 
 ---
 
@@ -434,6 +436,16 @@ return NextResponse.json({
 8. ~~**Race condition em aprovação**~~ ✅ CORRIGIDO - Lock distribuído implementado
 
 **Tech debt restante: NENHUMA CRÍTICA**
+
+---
+
+## 🔎 Auditoria Independente — Riscos e Planos
+
+- **Webhook sem segredo (HMAC)**: se `GITHUB_WEBHOOK_SECRET` não setado, aceita qualquer payload. **Plano**: fail-closed em produção; rate limit/anti-replay; teste unitário já cobre assinatura válida/ inválida.
+- **Retenção de repositórios clonados**: cleanup condicionado a flag; sem TTL/quotas. **Plano**: TTL padrão e limite de disco para `.legacyguard/cloned-repos`.
+- **Indexação “happy-path”**: depende de `PGVECTOR_URL`/`OPENAI_API_KEY` sem fila/backoff. **Plano**: enfileirar + backoff; check de prereqs antes de disparar.
+- **Sandbox sem Docker**: falha hard se Docker ausente e sem bypass; bypass permite execução sem isolamento. **Plano**: modo degradado opcional ou mensagem de configuração obrigatória; teste e2e com Docker real.
+- **E2E Twin Builder**: clone → harness → sandbox não coberto por teste de integração. **Plano**: teste e2e com mock git + sandbox permissive.
 
 ---
 
