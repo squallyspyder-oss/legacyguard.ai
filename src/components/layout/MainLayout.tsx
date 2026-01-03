@@ -20,6 +20,7 @@ export type AppSettings = {
   workerEnabled: boolean
   apiEnabled: boolean
   ragReady: boolean
+  ragDocumentCount: number // SITE_AUDIT P1: Contagem real de documentos
   // Cost controls
   deepSearch: boolean
   billingCap: number
@@ -36,6 +37,7 @@ const defaultSettings: AppSettings = {
   workerEnabled: true,
   apiEnabled: false,
   ragReady: true,
+  ragDocumentCount: 0, // SITE_AUDIT P1: Padrão 0 até carregar
   deepSearch: false,
   billingCap: 20,
   tokenCap: 12000,
@@ -140,7 +142,9 @@ export default function MainLayout() {
           const data = await res.json()
           console.log('[FRONTEND] Dados recebidos da API:', data);
           const cfg = data.config || {}
+          const ragStatus = data.ragStatus || {}
           console.log('[FRONTEND] Configuração extraída:', cfg);
+          console.log('[FRONTEND] RAG status:', ragStatus);
           console.log('[FRONTEND] workerEnabled da API:', cfg.workerEnabled);
 
           setSettings((prev) => {
@@ -154,6 +158,8 @@ export default function MainLayout() {
               deepSearch: cfg.deepSearch ?? prev.deepSearch,
               apiEnabled: cfg.apiEnabled ?? prev.apiEnabled,
               ragReady: cfg.ragReady ?? prev.ragReady,
+              // SITE_AUDIT P1: Carregar documentCount do ragStatus
+              ragDocumentCount: ragStatus.documentCount ?? prev.ragDocumentCount,
             };
             console.log('[FRONTEND] Novas configurações aplicadas:', newSettings);
             console.log('[FRONTEND] workerEnabled final:', newSettings.workerEnabled);

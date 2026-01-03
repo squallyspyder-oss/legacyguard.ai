@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import crypto from 'crypto';
 import { sanitizeMetadata } from './secrets';
+import { isMaskingEnabled } from './config';
 
 export type AuditSeverity = 'info' | 'warn' | 'error';
 
@@ -277,7 +278,11 @@ async function upsertRepo(repo?: AuditRepo): Promise<number | null> {
 
 export async function logEvent(input: AuditLogInput) {
   await ensureSchema();
-  const safeMetadata = input.metadata ? sanitizeMetadata(input.metadata) : null;
+  // SITE_AUDIT P0: Respeitar toggle maskingEnabled
+  const maskingActive = isMaskingEnabled();
+  const safeMetadata = input.metadata 
+    ? (maskingActive ? sanitizeMetadata(input.metadata) : input.metadata) 
+    : null;
   let id: number;
   const client = getPool();
   if (client) {

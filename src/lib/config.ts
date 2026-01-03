@@ -68,11 +68,41 @@ export function isWorkerEnabled(): boolean {
   }
 }
 
+/**
+ * Verifica se o mascaramento de segredos está habilitado.
+ * Padrão é TRUE (mais seguro) se não especificado.
+ * SITE_AUDIT P0: Implementação real do toggle maskingEnabled
+ */
+export function isMaskingEnabled(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path');
+
+    const DATA_DIR = path.join(process.cwd(), '.legacyguard');
+    const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+
+    if (!fs.existsSync(CONFIG_FILE)) {
+      return true; // Padrão seguro: mascaramento ativo
+    }
+
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+    const config = JSON.parse(raw);
+    
+    // Se não definido explicitamente, assume true (seguro)
+    return config.maskingEnabled ?? true;
+  } catch {
+    return true; // Em caso de erro, mantém seguro
+  }
+}
+
 const configModule = {
   REDIS_URL,
   REDIS_TLS_URL,
   getRedisUrl,
   isWorkerEnabled,
+  isMaskingEnabled,
 };
 
 export default configModule;

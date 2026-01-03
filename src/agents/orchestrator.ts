@@ -230,6 +230,12 @@ export class Orchestrator {
       this.log('⚠️ Risco alto/crítico detectado: aprovação obrigatória forçada');
     }
 
+    // SITE_AUDIT P0: Se reviewGate está ativo, forçar aprovação independente do risco
+    if (this.taskContext.reviewGate && !plan.requiresApproval) {
+      plan.requiresApproval = true;
+      this.log('🔒 Review Gate ativo: aprovação obrigatória forçada');
+    }
+
     this.state = {
       id: `orch-${Date.now()}`,
       plan,

@@ -9,8 +9,10 @@
     "start": "next start",
     "lint": "eslint",
     "worker": "tsx scripts/agentWorker.ts",
+    "worker:indexing": "tsx scripts/indexingWorker.ts",
     "build:worker": "tsc -p tsconfig.worker.json",
     "start:worker": "node dist/scripts/agentWorker.js",
+    "start:indexing-worker": "node dist/scripts/indexingWorker.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

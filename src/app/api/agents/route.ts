@@ -111,6 +111,7 @@ export async function POST(req: Request) {
         ...baseContext,
         ...(sandboxConfig?.enabled ? { sandbox: sandboxConfig } : {}),
         safeMode: body.safeMode ?? baseContext.safeMode,
+        reviewGate: body.reviewGate ?? baseContext.reviewGate ?? false,
         repoPath: baseContext.repoPath || process.env.LEGACYGUARD_REPO_PATH || process.cwd(),
         ...(body.executionPolicy ? { executionPolicy: body.executionPolicy } : {}),
         ...(body.guardrails ? { guardrails: body.guardrails } : {}),

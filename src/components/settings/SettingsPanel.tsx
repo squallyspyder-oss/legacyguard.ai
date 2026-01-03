@@ -562,11 +562,15 @@ function SecuritySettings({
 
       <SettingsSection title="Boas Praticas">
         <div className="space-y-2">
-          <BestPracticeItem text="Exigir citacoes de origem para sugestoes" checked />
-          <BestPracticeItem text="Circuit-breaker: limite de passos por orquestracao" checked />
-          <BestPracticeItem text="Dry-run antes de qualquer escrita ou deploy" checked />
-          <BestPracticeItem text="Bloquear mudancas em pastas criticas sem aprovacao" checked />
+          {/* SITE_AUDIT P1: Mostrar status real - apenas os que estão implementados */}
+          <BestPracticeItem text="Sandbox isolado para execução de código" checked={settings.sandboxEnabled} />
+          <BestPracticeItem text="Safe Mode bloqueia executor sem aprovação" checked={settings.safeMode} />
+          <BestPracticeItem text="Review Gate força aprovação em todas as operações" checked={settings.reviewGate} />
+          <BestPracticeItem text="Mascaramento de segredos em logs" checked={settings.maskingEnabled} />
         </div>
+        <p className="text-xs text-muted-foreground mt-3">
+          💡 Os controles acima refletem suas configurações atuais de segurança.
+        </p>
       </SettingsSection>
     </div>
   )
@@ -691,12 +695,22 @@ function DataSettings({
               <Database className="w-5 h-5 text-primary" />
               <span className="font-medium">Indice RAG</span>
             </div>
-            <span className={`badge ${settings.ragReady ? "badge-success" : "badge-warning"}`}>
-              {settings.ragReady ? "Indexado" : "Pendente"}
+            {/* SITE_AUDIT P1: Verificar documentCount > 0, não apenas ragReady */}
+            <span className={`badge ${settings.ragReady && settings.ragDocumentCount > 0 ? "badge-success" : "badge-warning"}`}>
+              {settings.ragReady && settings.ragDocumentCount > 0 
+                ? `Indexado (${settings.ragDocumentCount} docs)` 
+                : settings.ragReady && settings.ragDocumentCount === 0
+                  ? "Conectado (0 docs)"
+                  : "Pendente"}
             </span>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
             O RAG precisa estar indexado para respostas com contexto de repositorio.
+            {settings.ragReady && settings.ragDocumentCount === 0 && (
+              <span className="block mt-1 text-warning">
+                ⚠️ RAG conectado mas sem documentos indexados. Importe um repositorio primeiro.
+              </span>
+            )}
           </p>
           <div className="flex gap-2">
             <button className="flex-1 px-4 py-2 rounded-lg btn-secondary text-sm font-medium">Reindexar</button>

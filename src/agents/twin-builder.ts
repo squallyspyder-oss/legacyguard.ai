@@ -76,6 +76,85 @@ function log(taskId: string, message: string, scope: 'sandbox' | 'orchestrator' 
 
 // Diretório base para repositórios clonados
 const CLONED_REPOS_DIR = path.join(process.cwd(), '.legacyguard', 'cloned-repos');
+const CLONE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+const CLONE_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+
+async function getDirectorySizeBytes(dir: string): Promise<number> {
+  let total = 0;
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        total += await getDirectorySizeBytes(fullPath);
+      } else if (entry.isFile()) {
+        const stat = await fs.stat(fullPath);
+        total += stat.size;
+      }
+    }
+  } catch {
+    // ignore size errors
+  }
+  return total;
+}
+
+async function cleanupClonedRepos(taskId: string) {
+  try {
+    await fs.mkdir(CLONED_REPOS_DIR, { recursive: true });
+    const entries = await fs.readdir(CLONED_REPOS_DIR, { withFileTypes: true });
+
+    const repos: Array<{ name: string; fullPath: string; mtimeMs: number; size?: number }> = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(CLONED_REPOS_DIR, entry.name);
+      try {
+        const stat = await fs.stat(fullPath);
+        repos.push({ name: entry.name, fullPath, mtimeMs: stat.mtimeMs });
+      } catch {
+        continue;
+      }
+    }
+
+    const now = Date.now();
+
+    // Remove itens expirados por idade
+    for (const repo of repos) {
+      if (now - repo.mtimeMs > CLONE_MAX_AGE_MS) {
+        await fs.rm(repo.fullPath, { recursive: true, force: true });
+        log(taskId, `Limpeza TTL: removido repo clonado antigo ${repo.name}`);
+      }
+    }
+
+    // Recalcular lista após TTL
+    const remaining: Array<{ name: string; fullPath: string; mtimeMs: number; size: number }> = [];
+    for (const entry of await fs.readdir(CLONED_REPOS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(CLONED_REPOS_DIR, entry.name);
+      try {
+        const stat = await fs.stat(fullPath);
+        const size = await getDirectorySizeBytes(fullPath);
+        remaining.push({ name: entry.name, fullPath, mtimeMs: stat.mtimeMs, size });
+      } catch {
+        continue;
+      }
+    }
+
+    const totalBytes = remaining.reduce((acc, r) => acc + r.size, 0);
+    if (totalBytes <= CLONE_MAX_TOTAL_BYTES) return;
+
+    // Ordenar mais antigos primeiro para liberar espaço
+    remaining.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    let bytes = totalBytes;
+    for (const repo of remaining) {
+      if (bytes <= CLONE_MAX_TOTAL_BYTES) break;
+      await fs.rm(repo.fullPath, { recursive: true, force: true });
+      bytes -= repo.size;
+      log(taskId, `Limpeza por limite (${(CLONE_MAX_TOTAL_BYTES / (1024 * 1024)).toFixed(0)} MB): removido ${repo.name}`);
+    }
+  } catch (err: unknown) {
+    log(taskId, `Aviso: falha ao limpar repositórios clonados: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 /**
  * Verifica se o git está disponível no ambiente antes de clonar.
@@ -111,7 +190,11 @@ async function cloneRepository(
   commit: string | undefined,
   taskId: string
 ): Promise<string> {
-  await ensureGitAvailable(taskId);
+  const useFakeClone = process.env.LEGACYGUARD_FAKE_CLONE === 'true';
+
+  if (!useFakeClone) {
+    await ensureGitAvailable(taskId);
+  }
 
   // Normalizar URL do repositório
   let normalizedUrl = repoUrl;
@@ -136,6 +219,13 @@ async function cloneRepository(
   
   log(taskId, `Clonando repositório: ${repoUrl.replace(/\/\/[^@]+@/, '//')} → ${cloneDir}`);
   
+  // Atalho para testes/sandbox onde git real não está disponível
+  if (useFakeClone) {
+    await fs.mkdir(cloneDir, { recursive: true });
+    await fs.writeFile(path.join(cloneDir, 'README.md'), '# fake clone');
+    return cloneDir;
+  }
+
   try {
     // Criar diretório pai se necessário
     await fs.mkdir(path.dirname(cloneDir), { recursive: true });
@@ -224,6 +314,8 @@ async function resolveRepoPath(
   incident: IncidentAlert,
   taskId: string
 ): Promise<{ repoPath: string; wasCloned: boolean }> {
+  await cleanupClonedRepos(taskId);
+
   // Se o caminho local existe, usar diretamente
   if (fssync.existsSync(inputRepoPath)) {
     log(taskId, `Usando repositório local: ${inputRepoPath}`);
@@ -490,6 +582,11 @@ function evaluateImpactGuardrails(incident: IncidentAlert) {
 }
 
 async function execSandbox(runnerPath: string, repoPath: string, command: string, failMode: 'fail' | 'warn' = 'fail', taskId: string) {
+  if (process.env.LEGACYGUARD_FAKE_SANDBOX === 'true') {
+    log(taskId, 'Sandbox fake habilitado - pulando execução real', 'sandbox');
+    return;
+  }
+
   const toDockerPath = (p: string) => {
     if (process.platform !== 'win32') return p;
     const match = p.match(/^[A-Za-z]:\\/);

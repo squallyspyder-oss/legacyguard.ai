@@ -287,6 +287,7 @@ export default function ChatContainer({
               request: `[Twin Builder] Reproduzir cenário para: ${context || input || "análise"}`,
               sandbox: { enabled: true, mode: settings.sandboxMode },
               safeMode: settings.safeMode,
+              reviewGate: settings.reviewGate,
             }),
           })
           
@@ -354,6 +355,7 @@ export default function ChatContainer({
               request: context || input || "executar plano completo",
               sandbox: settings.sandboxEnabled ? { enabled: true, mode: settings.sandboxMode } : undefined,
               safeMode: settings.safeMode,
+              reviewGate: settings.reviewGate,
             }),
           })
           
@@ -541,6 +543,7 @@ export default function ChatContainer({
             request: userText, // API espera 'request', não 'message'
             sandbox: settings.sandboxEnabled ? { enabled: true, mode: settings.sandboxMode } : undefined,
             safeMode: settings.safeMode,
+            reviewGate: settings.reviewGate,
           }),
         })
 

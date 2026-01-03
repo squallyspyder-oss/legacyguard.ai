@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
-import { verifySignature } from '../src/app/api/github/webhook/route';
+import { verifySignature, isReplay } from '../src/app/api/github/webhook/route';
 
 const SECRET = 'test-secret';
 
@@ -21,6 +21,7 @@ describe('webhook.verifySignature', () => {
     } else {
       process.env.GITHUB_WEBHOOK_SECRET = prev;
     }
+    vi.useRealTimers();
   });
 
   it('accepts valid signature', () => {
@@ -40,5 +41,26 @@ describe('webhook.verifySignature', () => {
     const body = '{"test":true}';
     // Without secret configured, it should return true to avoid blocking dev
     expect(verifySignature(body, null)).toBe(true);
+  });
+});
+
+describe('webhook.isReplay', () => {
+  it('detects repeated delivery within TTL', () => {
+    const deliveryId = 'delivery-1';
+    expect(isReplay(deliveryId)).toBe(false);
+    expect(isReplay(deliveryId)).toBe(true);
+  });
+
+  it('expires entries after TTL and allows again', () => {
+    vi.useFakeTimers();
+    const start = new Date('2024-01-01T00:00:00Z');
+    vi.setSystemTime(start);
+
+    const deliveryId = 'delivery-2';
+    expect(isReplay(deliveryId)).toBe(false);
+
+    // Advance beyond TTL (5 min) to trigger cleanup and allow again
+    vi.setSystemTime(new Date(start.getTime() + 5 * 60 * 1000 + 1000));
+    expect(isReplay(deliveryId)).toBe(false);
   });
 });

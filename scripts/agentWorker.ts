@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
 import {
   ensureGroup,
   readGroup,
@@ -14,6 +17,10 @@ import { runReviewer } from '../src/agents/reviewer';
 import { createOrchestrator } from '../src/agents/orchestrator';
 import { consumeReservation, refundReservation } from '../src/lib/quotas';
 import { logBootDiagnostics } from '../src/lib/boot';
+
+const envLocal = path.join(process.cwd(), '.env.local');
+if (fs.existsSync(envLocal)) dotenv.config({ path: envLocal });
+dotenv.config();
 
 // Stream para resultados (feedback loop)
 const RESULTS_STREAM = 'agent-results';
