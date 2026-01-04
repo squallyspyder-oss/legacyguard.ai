@@ -4,7 +4,7 @@ import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import type { Session } from "next-auth"
 import type { AppSettings } from "../layout/MainLayout"
-import { Menu, Settings, Shield, Brain, Zap, Search, Terminal, GitBranch, Eye } from "lucide-react"
+import { Menu, Settings, Shield, Zap, Search, Terminal, GitBranch, Eye, Lightbulb } from "lucide-react"
 
 /**
  * AssistContainer - Container Principal do LegacyAssist
@@ -67,7 +67,7 @@ const TOOL_ICONS: Record<string, React.ReactNode> = {
   getGraph: <GitBranch className="w-3 h-3" />,
   analyzeCode: <Eye className="w-3 h-3" />,
   orchestrate: <Zap className="w-3 h-3" />,
-  twinBuilder: <Brain className="w-3 h-3" />,
+  twinBuilder: <Lightbulb className="w-3 h-3" />,
   readFile: <Search className="w-3 h-3" />,
   listFiles: <Search className="w-3 h-3" />,
 }
@@ -256,7 +256,7 @@ export default function AssistContainer({
             </button>
           )}
           <div className="flex items-center gap-2">
-            <Brain className="w-5 h-5 text-primary" />
+            <Lightbulb className="w-5 h-5 text-primary" />
             <span className="font-semibold">LegacyAssist</span>
             <span className="text-xs text-muted-foreground bg-primary/10 px-2 py-0.5 rounded-full">
               Guardião Autônomo
@@ -300,7 +300,7 @@ export default function AssistContainer({
             aria-label="Alternar visualização de raciocínio"
             title={showThinking ? "Ocultar raciocínio" : "Mostrar raciocínio"}
           >
-            <Brain className="w-4 h-4" />
+            <Lightbulb className="w-4 h-4" />
           </button>
           <button
             onClick={onOpenSettings}
@@ -319,7 +319,7 @@ export default function AssistContainer({
           <div className="max-w-2xl w-full space-y-8">
             <div className="text-center space-y-3">
               <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center mx-auto">
-                <Brain className="w-8 h-8 text-primary" />
+                <Lightbulb className="w-8 h-8 text-primary" />
               </div>
               <h1 className="text-2xl font-bold">LegacyAssist</h1>
               <p className="text-muted-foreground">
@@ -385,7 +385,7 @@ export default function AssistContainer({
                 <Eye className="w-3 h-3" /> Análise
               </span>
               <span className="flex items-center gap-1 bg-secondary/50 px-2 py-1 rounded">
-                <Brain className="w-3 h-3" /> Twin Builder
+                <Lightbulb className="w-3 h-3" /> Twin Builder
               </span>
             </div>
           </div>
@@ -408,7 +408,7 @@ export default function AssistContainer({
                     {message.thinking && showThinking && (
                       <div className="mb-4 p-3 rounded-lg bg-background/50 border border-primary/20 text-sm">
                         <div className="flex items-center gap-2 text-primary font-medium mb-2">
-                          <Brain className="w-4 h-4" />
+                          <Lightbulb className="w-4 h-4" />
                           <span>Raciocínio</span>
                         </div>
                         <div className="space-y-2 text-muted-foreground">

@@ -6,11 +6,35 @@
  * 2. Uso Ativo de Ferramentas (Tool Use)
  * 3. Gestão de Contexto Dinâmico (Memória de Sessão)
  * 4. Personalidade Operacional (Vibe Code Proativo)
+ * 
+ * Integrado com Guardian Flow para:
+ * - Safety Gates (validação determinística)
+ * - LOA (Níveis de Automação)
+ * - Gamificação (XP, Missões)
  */
 
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources';
 import { estimateCostUSD } from './pricing';
+
+// Guardian Flow Integration
+import {
+  classifyIntent,
+  calculateRiskPulse,
+  getFlowEngine,
+  type ClassifiedIntent,
+  type LOALevel,
+  type RiskPulse,
+  LOA_CONFIGS,
+  validateIntent,
+  calculateBlastRadius,
+  validateDeterministic,
+  runSecurityScan,
+  requestHumanApproval,
+  calculateXPReward,
+  generateDailyMissions,
+  type Mission,
+} from '../guardian-flow';
 
 // ============================================================================
 // TIPOS E INTERFACES
@@ -25,6 +49,16 @@ export interface SessionState {
   activeTasks: { id: string; type: string; status: string }[];
   ragContext?: string[];
   graphContext?: { nodes: number; edges: number };
+  // Guardian Flow Integration
+  guardianContext?: {
+    loaLevel: LOALevel;
+    riskPulse: RiskPulse;
+    classifiedIntent?: ClassifiedIntent;
+    safetyGatesPassed: string[];
+    pendingApproval?: boolean;
+    xpEarned: number;
+    activeMissions: Mission[];
+  };
 }
 
 export interface ThinkingBlock {
@@ -203,10 +237,69 @@ export const AGENT_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  // ========================================================================
+  // GUARDIAN FLOW TOOLS
+  // ========================================================================
+  {
+    type: 'function',
+    function: {
+      name: 'guardianFlow',
+      description: 'Interage com o Guardian Flow para executar ações com segurança. Use para: classificar risco (LOA), passar por Safety Gates, e obter aprovação para ações de alto risco.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { 
+            type: 'string', 
+            enum: ['classify', 'validateIntent', 'checkBlastRadius', 'runDeterministic', 'securityScan', 'requestApproval'],
+            description: 'Ação do Guardian Flow a executar'
+          },
+          intent: { type: 'string', description: 'Intenção do usuário (para classify/validateIntent)' },
+          code: { type: 'string', description: 'Código a validar (para runDeterministic/securityScan)' },
+          filePaths: { type: 'array', items: { type: 'string' }, description: 'Arquivos afetados (para checkBlastRadius)' },
+          reason: { type: 'string', description: 'Justificativa (para requestApproval)' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'checkSafetyGates',
+      description: 'Executa verificações de segurança antes de uma ação. Retorna status de todos os gates de segurança.',
+      parameters: {
+        type: 'object',
+        properties: {
+          intent: { type: 'string', description: 'Descrição da ação pretendida' },
+          affectedFiles: { type: 'array', items: { type: 'string' }, description: 'Arquivos que serão modificados' },
+          loaLevel: { type: 'number', description: 'Nível de automação (1-4)' },
+        },
+        required: ['intent'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getMissions',
+      description: 'Obtém missões diárias do sistema de gamificação Guardian Flow. Use para motivar e guiar o usuário.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: { 
+            type: 'string', 
+            enum: ['cleanup', 'security', 'docs', 'tests', 'refactor'],
+            description: 'Categoria de missão (opcional)'
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ============================================================================
-// FEW-SHOT EXAMPLES (PERSONALIDADE PROATIVA)
+// FEW-SHOT EXAMPLES (PERSONALIDADE PROATIVA + GUARDIAN FLOW)
 // ============================================================================
 
 export const FEW_SHOT_EXAMPLES = `
@@ -227,20 +320,37 @@ Enquanto isso, posso verificar o índice RAG por queries N+1 conhecidas?"
 Enquanto o Twin prepara o ambiente, vou buscar no RAG por handlers de checkout:
 <tool>searchRAG({ query: 'checkout order create duplicate', limit: 10 })</tool>"
 
-### Exemplo 3: Refatoração
+### Exemplo 3: Refatoração (COM GUARDIAN FLOW)
 **Usuário:** "Preciso refatorar o módulo de autenticação"
 **❌ Resposta Fraca:** "Refatoração é importante. Você deveria começar escrevendo testes..."
-**✅ Resposta Forte:** "Primeiro, vou mapear o impacto dessa refatoração:
+**✅ Resposta Forte:** "Refatoração de autenticação é operação de **risco médio**. Vou ativar o Guardian Flow:
+<tool>guardianFlow({ action: 'classify', intent: 'refatorar módulo de autenticação' })</tool>
 <tool>getGraph({ entryPoint: 'src/auth/index.ts', depth: 4 })</tool>
-Com o grafo de dependências, vou identificar quais módulos serão afetados e orquestrar um plano seguro com Reviewer + Executor em sandbox."
+Com LOA 2 (Revisão), vou passar pelos Safety Gates e orquestrar Reviewer + Executor em sandbox."
 
-### Exemplo 4: Dúvida Técnica
+### Exemplo 4: Alteração de Banco de Dados (ALTO RISCO)
+**Usuário:** "Preciso adicionar uma coluna na tabela de usuários"
+**❌ Resposta Fraca:** "Alterar schema de banco requer cuidado. Você já fez backup?"
+**✅ Resposta Forte:** "⚠️ Alteração de schema é **LOA 3 (Alto Risco)**. Ativando Guardian Flow:
+<tool>guardianFlow({ action: 'classify', intent: 'alterar schema tabela usuarios' })</tool>
+<tool>guardianFlow({ action: 'checkBlastRadius', filePaths: ['migrations/', 'src/models/user.ts'] })</tool>
+Antes de prosseguir, vou executar validação determinística 10x no sandbox e requerer sua aprovação explícita:
+<tool>checkSafetyGates({ intent: 'adicionar coluna tabela usuarios', loaLevel: 3 })</tool>"
+
+### Exemplo 5: Dúvida Técnica (SEM RISCO)
 **Usuário:** "Como funciona a fila de jobs?"
 **❌ Resposta Fraca:** "Filas de jobs geralmente funcionam com produtores e consumidores..."
 **✅ Resposta Forte:** "Deixa eu verificar a implementação específica no seu projeto:
 <tool>searchRAG({ query: 'queue job worker consumer', limit: 5 })</tool>
 <tool>readFile({ path: 'src/lib/queue.ts' })</tool>
 Vou analisar o código e te mostrar exatamente como a fila está configurada aqui."
+
+### Exemplo 6: Motivação (GAMIFICAÇÃO)
+**Usuário:** "O que posso fazer para melhorar o projeto?"
+**❌ Resposta Fraca:** "Existem várias melhorias possíveis. Você poderia adicionar testes..."
+**✅ Resposta Forte:** "Ótima iniciativa! Deixa eu verificar suas missões do Guardian Flow:
+<tool>getMissions({})</tool>
+Com base no seu perfil e nas missões ativas, vou sugerir tarefas que maximizam XP e impacto."
 `;
 
 // ============================================================================
@@ -248,6 +358,10 @@ Vou analisar o código e te mostrar exatamente como a fila está configurada aqu
 // ============================================================================
 
 export function buildAgentSystemPrompt(sessionState: SessionState): string {
+  const guardianInfo = sessionState.guardianContext 
+    ? formatGuardianContext(sessionState.guardianContext)
+    : '_Guardian Flow não inicializado_';
+
   return `Você é o **LegacyAssist**, o guardião técnico do LegacyGuard.
 
 ## SUA IDENTIDADE
@@ -258,29 +372,65 @@ Você não é um assistente passivo. Você é um **parceiro de execução** - um
 - ANTECIPA problemas antes que aconteçam
 - ASSUME RESPONSABILIDADE pelo sucesso da tarefa
 
+## GUARDIAN FLOW - SISTEMA DE SEGURANÇA
+
+Você opera dentro do **Guardian Flow**, um sistema que garante execução segura:
+
+### Níveis de Automação (LOA)
+- **LOA 1 (🟢 Baixo):** Automático - formatação, lint, docs
+- **LOA 2 (🟡 Médio):** Requer revisão - refatoração, bug fixes
+- **LOA 3 (🔴 Alto):** Requer comando explícito - arquitetura, segurança, DB
+- **LOA 4 (⚫ Crítico):** Apenas manual - decisões de negócio
+
+### Safety Gates (Use ANTES de ações de risco)
+1. **guardianFlow({ action: 'classify' })** - Classifica risco da intenção
+2. **guardianFlow({ action: 'checkBlastRadius' })** - Calcula impacto
+3. **guardianFlow({ action: 'runDeterministic' })** - Valida 10x no sandbox
+4. **guardianFlow({ action: 'securityScan' })** - Verifica vulnerabilidades
+5. **guardianFlow({ action: 'requestApproval' })** - Solicita aprovação humana
+
+### Quando Usar Guardian Flow
+- **Sempre** classifique antes de ações que modificam código
+- Para LOA 2+, passe pelos Safety Gates
+- Para LOA 3+, exija aprovação explícita
+- Use **checkSafetyGates()** para verificação completa
+
+## ESTADO DO GUARDIAN FLOW
+
+${guardianInfo}
+
 ## LOOP DE RACIOCÍNIO OBRIGATÓRIO
 
 Antes de responder, você DEVE pensar estruturadamente. Use o formato:
 
 <thinking>
 1. **O que eu entendi:** [resumo do pedido do usuário]
-2. **O que está faltando:** [informações que preciso obter]
-3. **Qual agente/ferramenta é melhor:** [escolha técnica justificada]
-4. **Riscos identificados:** [problemas potenciais]
-5. **Meu plano:** [lista de ações concretas]
+2. **Classificação de Risco:** [LOA estimado e por quê]
+3. **O que está faltando:** [informações que preciso obter]
+4. **Qual agente/ferramenta é melhor:** [escolha técnica justificada]
+5. **Safety Gates necessários:** [quais verificações de segurança aplicar]
+6. **Riscos identificados:** [problemas potenciais]
+7. **Meu plano:** [lista de ações concretas]
 </thinking>
 
 ## FERRAMENTAS DISPONÍVEIS
 
-Você tem acesso a ferramentas reais. USE-AS:
+### Ferramentas de Análise
 - **searchRAG()** - Buscar contexto no repositório
-- **runSandbox()** - Executar código isoladamente
 - **getGraph()** - Mapear dependências
 - **analyzeCode()** - Análise estática
-- **orchestrate()** - Coordenar múltiplos agentes
-- **twinBuilder()** - Reproduzir incidentes
 - **readFile()** - Ler arquivos
 - **listFiles()** - Listar estrutura
+
+### Ferramentas de Execução
+- **runSandbox()** - Executar código isoladamente
+- **orchestrate()** - Coordenar múltiplos agentes
+- **twinBuilder()** - Reproduzir incidentes
+
+### Guardian Flow (SEGURANÇA)
+- **guardianFlow()** - Classificar risco, validar, aprovar
+- **checkSafetyGates()** - Verificação completa de segurança
+- **getMissions()** - Missões de gamificação
 
 Quando detectar necessidade de execução, CHAME a ferramenta. Não sugira - execute.
 
@@ -292,23 +442,56 @@ ${formatSessionState(sessionState)}
 
 ## DIRETRIZES CRÍTICAS
 
-1. **Seja proativo:** Se vir um problema, investigue imediatamente
-2. **Use contexto:** Sempre verifique o RAG antes de responder sobre código
-3. **Valide antes de executar:** Use sandbox para testar antes de aplicar
-4. **Comunique claramente:** Diga o que está fazendo e por quê
-5. **Assuma controle:** Você é o especialista, não o usuário
+1. **Classifique primeiro:** Use guardianFlow('classify') para ações modificadoras
+2. **Seja proativo:** Se vir um problema, investigue imediatamente
+3. **Use contexto:** Sempre verifique o RAG antes de responder sobre código
+4. **Valide antes de executar:** Para LOA 2+, passe pelos Safety Gates
+5. **Comunique claramente:** Diga o que está fazendo, LOA e por quê
+6. **Assuma controle:** Você é o especialista, não o usuário
 
 ## FORMATO DE RESPOSTA
 
 Sempre estruture assim:
-1. <thinking>...</thinking> (raciocínio interno)
-2. Ações executadas (ferramentas chamadas)
-3. Análise dos resultados
-4. Próximos passos recomendados ou conclusão
+1. <thinking>...</thinking> (raciocínio interno com classificação LOA)
+2. Verificações de segurança (se LOA 2+)
+3. Ações executadas (ferramentas chamadas)
+4. Análise dos resultados
+5. Próximos passos recomendados ou conclusão
 
-Se uma tarefa é complexa, orquestre múltiplos agentes. Se precisa de aprovação, solicite.
-Mas nunca apenas "sugira" quando pode "fazer".
+Para ações de alto risco, SEMPRE mostre a classificação LOA e Safety Gates passados.
+Nunca apenas "sugira" quando pode "fazer" de forma segura.
 `;
+}
+
+function formatGuardianContext(ctx: NonNullable<SessionState['guardianContext']>): string {
+  const parts: string[] = [];
+  
+  const loaEmoji = { 1: '🟢', 2: '🟡', 3: '🔴', 4: '⚫' };
+  parts.push(`**LOA Atual:** ${loaEmoji[ctx.loaLevel]} Nível ${ctx.loaLevel}`);
+  
+  const pulseEmoji = { green: '🟢', yellow: '🟡', orange: '🟠', red: '🔴' };
+  parts.push(`**Risk Pulse:** ${pulseEmoji[ctx.riskPulse]} ${ctx.riskPulse}`);
+  
+  if (ctx.classifiedIntent) {
+    parts.push(`**Intenção:** ${ctx.classifiedIntent.intent} (${ctx.classifiedIntent.confidence}% confiança)`);
+  }
+  
+  if (ctx.safetyGatesPassed.length > 0) {
+    parts.push(`**Safety Gates Passados:** ✅ ${ctx.safetyGatesPassed.join(', ')}`);
+  }
+  
+  if (ctx.pendingApproval) {
+    parts.push(`⏳ **Aguardando aprovação humana**`);
+  }
+  
+  parts.push(`**XP Ganho:** ${ctx.xpEarned} XP`);
+  
+  if (ctx.activeMissions.length > 0) {
+    const missions = ctx.activeMissions.slice(0, 3).map(m => `${m.title} (${m.progress}/${m.target})`);
+    parts.push(`**Missões Ativas:** ${missions.join(', ')}`);
+  }
+  
+  return parts.join('\n');
 }
 
 function formatSessionState(state: SessionState): string {
@@ -354,14 +537,32 @@ function formatSessionState(state: SessionState): string {
 // ============================================================================
 
 export interface ToolExecutor {
+  // Ferramentas de Análise
   searchRAG: (params: { query: string; limit?: number; fileFilter?: string }) => Promise<string>;
-  runSandbox: (params: { command: string; workdir?: string; timeout?: number }) => Promise<string>;
   getGraph: (params: { entryPoint?: string; depth?: number }) => Promise<string>;
   analyzeCode: (params: { filePath: string; checks?: string[] }) => Promise<string>;
-  orchestrate: (params: { task: string; agents?: string[]; requiresApproval?: boolean }) => Promise<string>;
-  twinBuilder: (params: { scenario: string; fixtures?: string[]; targetBehavior?: string }) => Promise<string>;
   readFile: (params: { path: string; startLine?: number; endLine?: number }) => Promise<string>;
   listFiles: (params: { path: string; pattern?: string; recursive?: boolean }) => Promise<string>;
+  
+  // Ferramentas de Execução
+  runSandbox: (params: { command: string; workdir?: string; timeout?: number }) => Promise<string>;
+  orchestrate: (params: { task: string; agents?: string[]; requiresApproval?: boolean }) => Promise<string>;
+  twinBuilder: (params: { scenario: string; fixtures?: string[]; targetBehavior?: string }) => Promise<string>;
+  
+  // Guardian Flow Tools
+  guardianFlow: (params: { 
+    action: 'classify' | 'validateIntent' | 'checkBlastRadius' | 'runDeterministic' | 'securityScan' | 'requestApproval';
+    intent?: string;
+    code?: string;
+    filePaths?: string[];
+    reason?: string;
+  }) => Promise<string>;
+  checkSafetyGates: (params: { 
+    intent: string; 
+    affectedFiles?: string[]; 
+    loaLevel?: number;
+  }) => Promise<string>;
+  getMissions: (params: { category?: string }) => Promise<string>;
 }
 
 export async function executeToolCall(

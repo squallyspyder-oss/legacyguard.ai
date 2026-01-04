@@ -2,39 +2,86 @@
 
 ## Visão Geral
 
-O LegacyAssist foi completamente redesenhado para ser um **agente autônomo de alta performance**, seguindo os 4 pilares de excelência em IA:
+O LegacyAssist foi completamente redesenhado para ser um **agente autônomo de alta performance**, seguindo os 4 pilares de excelência em IA e **integrado com o Guardian Flow** para segurança determinística.
 
 | Antes (Chat Comum) | Depois (LegacyAssist 2.0) |
 |-------------------|---------------------------|
 | Resposta reativa e teórica | Resposta proativa e prática |
-| Contexto apenas do que foi dito | Contexto completo do sistema |
-| "Você poderia tentar..." | "Estou executando..." |
-| Assistente passivo | Guardião técnico autônomo |
+| Contexto apenas do que foi dito | Contexto completo do sistema + Guardian Flow |
+| "Você poderia tentar..." | "Estou executando..." com Safety Gates |
+| Assistente passivo | Guardião técnico autônomo com LOA |
 
 ---
 
 ## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    LegacyAssist 2.0                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    │
-│  │   Pilar 1   │    │   Pilar 2   │    │   Pilar 3   │    │
-│  │  Reasoning  │───▶│  Tool Use   │───▶│  Context    │    │
-│  │    Loop     │    │   Ativo     │    │  Dinâmico   │    │
-│  └─────────────┘    └─────────────┘    └─────────────┘    │
-│         │                  │                  │            │
-│         │                  ▼                  │            │
-│         │         ┌─────────────┐            │            │
-│         │         │   Pilar 4   │            │            │
-│         └────────▶│ Personality │◀───────────┘            │
-│                   │  Proativa   │                          │
-│                   └─────────────┘                          │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                       LegacyAssist 2.0                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐            │
+│  │   Pilar 1   │    │   Pilar 2   │    │   Pilar 3   │            │
+│  │  Reasoning  │───▶│  Tool Use   │───▶│  Context    │            │
+│  │    Loop     │    │   Ativo     │    │  Dinâmico   │            │
+│  └─────────────┘    └─────────────┘    └─────────────┘            │
+│         │                  │                  │                    │
+│         │                  ▼                  │                    │
+│         │         ┌─────────────┐            │                    │
+│         │         │   Pilar 4   │            │                    │
+│         └────────▶│ Personality │◀───────────┘                    │
+│                   │  Proativa   │                                  │
+│                   └──────┬──────┘                                  │
+│                          │                                         │
+│                          ▼                                         │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                    GUARDIAN FLOW                             │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │  │
+│  │  │    LOA      │  │   Safety    │  │ Gamification│         │  │
+│  │  │ (1-4 Níveis)│  │    Gates    │  │   (XP/Missões)       │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘         │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Integração com Guardian Flow
+
+O LegacyAssist 2.0 utiliza o **Guardian Flow** como camada de segurança:
+
+### Níveis de Automação (LOA)
+
+| LOA | Risco | Ação Humana | Exemplos |
+|-----|-------|-------------|----------|
+| 🟢 1 | Baixo | Notificação | Formatação, docs, lint |
+| 🟡 2 | Médio | Aprovação | Refatoração, bug fixes |
+| 🔴 3 | Alto | Comando | Arquitetura, segurança, DB |
+| ⚫ 4 | Crítico | Manual | Decisões de negócio |
+
+### Ferramentas do Guardian Flow
+
+```typescript
+// Classificar risco de uma ação
+guardianFlow({ action: 'classify', intent: 'refatorar módulo de auth' })
+// → Retorna: LOA 2, agentes necessários, risk factors
+
+// Verificar impacto
+guardianFlow({ action: 'checkBlastRadius', filePaths: ['src/auth/'] })
+// → Retorna: score %, arquivos afetados, risco
+
+// Safety Gates completos
+checkSafetyGates({ intent: 'alterar banco', affectedFiles: ['migrations/'], loaLevel: 3 })
+// → Retorna: todos os gates + status de aprovação
+```
+
+### Arquivos do Guardian Flow
+
+- [guardian-flow/index.ts](../src/guardian-flow/index.ts) - Exports públicos
+- [guardian-flow/engine/FlowEngine.ts](../src/guardian-flow/engine/FlowEngine.ts) - Motor de orquestração
+- [guardian-flow/engine/SafetyGates.ts](../src/guardian-flow/engine/SafetyGates.ts) - Portões de segurança
+- [GUARDIAN_FLOW_SPEC.md](./GUARDIAN_FLOW_SPEC.md) - Especificação completa
 
 ---
 
@@ -44,15 +91,17 @@ O LegacyAssist opera em um loop estruturado: **Analisar → Planejar → Agir �
 
 ### Implementação
 
-Antes de cada resposta, o agente gera um bloco `<thinking>`:
+Antes de cada resposta, o agente gera um bloco `<thinking>` que agora inclui classificação LOA:
 
 ```xml
 <thinking>
 1. **O que eu entendi:** [resumo do pedido]
-2. **O que está faltando:** [informações necessárias]
-3. **Qual agente/ferramenta é melhor:** [escolha técnica]
-4. **Riscos identificados:** [problemas potenciais]
-5. **Meu plano:** [ações concretas]
+2. **Classificação de Risco:** [LOA estimado e justificativa]
+3. **O que está faltando:** [informações necessárias]
+4. **Qual agente/ferramenta é melhor:** [escolha técnica]
+5. **Safety Gates necessários:** [verificações de segurança]
+6. **Riscos identificados:** [problemas potenciais]
+7. **Meu plano:** [ações concretas]
 </thinking>
 ```
 
@@ -67,26 +116,46 @@ Antes de cada resposta, o agente gera um bloco `<thinking>`:
 
 O agente não "acha" as coisas - ele **verifica**. Ferramentas disponíveis:
 
+### Ferramentas de Análise
+
 | Ferramenta | Descrição | Uso |
 |------------|-----------|-----|
 | `searchRAG()` | Busca no índice vetorial | Encontrar código/docs relevantes |
-| `runSandbox()` | Execução isolada | Testar código com segurança |
 | `getGraph()` | Grafo de dependências | Mapear impacto de mudanças |
 | `analyzeCode()` | Análise estática | Verificar qualidade/bugs |
-| `orchestrate()` | Orquestração multi-agente | Tarefas complexas |
-| `twinBuilder()` | Reprodução de incidentes | Debug de bugs |
 | `readFile()` | Leitura de arquivos | Obter código-fonte |
 | `listFiles()` | Listagem de diretórios | Explorar estrutura |
 
-### Exemplo de Uso
+### Ferramentas de Execução
+
+| Ferramenta | Descrição | Uso |
+|------------|-----------|-----|
+| `runSandbox()` | Execução isolada | Testar código com segurança |
+| `orchestrate()` | Orquestração multi-agente | Tarefas complexas |
+| `twinBuilder()` | Reprodução de incidentes | Debug de bugs |
+
+### Ferramentas do Guardian Flow (SEGURANÇA)
+
+| Ferramenta | Descrição | Uso |
+|------------|-----------|-----|
+| `guardianFlow()` | Interação com sistema de segurança | Classificar risco, validar, aprovar |
+| `checkSafetyGates()` | Verificação completa de segurança | Passar por todos os gates |
+| `getMissions()` | Sistema de gamificação | Obter missões diárias |
+
+### Exemplo de Uso com Guardian Flow
 
 ```typescript
-// Usuário: "O sistema está lento"
-// O agente NÃO diz: "Sinto muito, existem várias causas..."
-// O agente DIZ:
+// Usuário: "Preciso alterar o schema do banco de dados"
+// O agente:
 
-"Vou rodar o Advisor para identificar gargalos:"
-<tool>analyzeCode({ filePath: 'src/database', checks: ['complexity', 'performance'] })</tool>
+"⚠️ Alteração de schema é operação de alto risco. Ativando Guardian Flow:"
+<tool>guardianFlow({ action: 'classify', intent: 'alterar schema banco de dados' })</tool>
+// → LOA 3, requer aprovação
+
+<tool>checkSafetyGates({ intent: 'alterar schema', affectedFiles: ['migrations/'], loaLevel: 3 })</tool>
+// → Todos os gates + pendingApproval: true
+
+"Antes de prosseguir, preciso da sua aprovação explícita para LOA 3."
 ```
 
 ### Arquivos Relacionados

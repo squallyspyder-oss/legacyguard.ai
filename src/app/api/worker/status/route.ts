@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 
 // Update task status (called by worker)
 export async function POST(req: NextRequest) {
-  const auth = await requirePermission('admin');
+  const auth = await requirePermission('orchestrate');
   if (!auth.authorized) {
     return auth.response;
   }
