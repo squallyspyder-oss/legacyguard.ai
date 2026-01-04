@@ -1,43 +1,59 @@
 'use client';
 import React, { useState } from 'react';
 
-// Modos principais simplificados - o sistema faz roteamento automático
+// LegacyAssist é o único modo principal - agente autônomo de alta performance
+// O sistema roteia automaticamente para as ferramentas certas
 export const PRIMARY_MODES = [
   { 
     key: 'legacyAssist', 
-    label: '🧭 LegacyAssist', 
-    subtitle: 'Reproduzir e Corrigir Incidentes',
-    description: 'O Twin Builder cria réplica digital do incidente, coordena análise e correção automaticamente.',
+    label: '🛡️ LegacyAssist', 
+    subtitle: 'Guardião Técnico Autônomo',
+    description: 'Agente de alta performance com raciocínio estruturado, uso ativo de ferramentas e personalidade proativa. Analisa, planeja, age e corrige automaticamente.',
     agents: ['twin-builder', 'planner', 'advisor', 'operator', 'reviewer', 'executor'],
     recommended: true,
-  },
-  { 
-    key: 'chat', 
-    label: '💬 Chat', 
-    subtitle: 'Pesquisa e Brainstorm',
-    description: 'Perguntas rápidas, pesquisa leve. Detecta automaticamente quando você precisa de ação.',
-    agents: ['chat'],
-    recommended: false,
-  },
-  { 
-    key: 'orchestrate', 
-    label: '🎭 Orquestrador', 
-    subtitle: 'Tarefas Complexas',
-    description: 'Para tarefas que precisam de múltiplos agentes coordenados sem ser um incidente específico.',
-    agents: ['planner', 'advisor', 'operator', 'reviewer', 'executor'],
-    recommended: false,
+    capabilities: ['searchRAG', 'runSandbox', 'getGraph', 'analyzeCode', 'orchestrate', 'twinBuilder'],
   },
 ];
 
-// Agentes individuais (modo avançado)
+// Agentes especializados (disponíveis via LegacyAssist automaticamente)
 export const AGENT_ROLES = [
-  { key: 'legacyAssist', label: '🧭 LegacyAssist — Guia Assistido', description: 'Assistente do sistema: orienta próximos passos, sugere pesquisas (web/RAG) e mostra caminhos guiados' },
-  { key: 'chat', label: '💬 Chat Livre — Pesquisa/Brainstorm', description: 'Perguntas rápidas, pesquisa leve, brainstorm econômico com opção de aprofundar' },
-  { key: 'orchestrate', label: '🎭 Orquestrador — Planeja e coordena agentes', description: 'Quebra tarefas complexas, coordena múltiplos agentes automaticamente' },
-  { key: 'advisor', label: '🔍 Advisor — Analisa e sugere', description: 'Análise de código, sugestões de melhorias, identificação de problemas' },
-  { key: 'operator', label: '🔧 Operator — Cria branch & PR', description: 'Aplica patches, cria branches, abre Pull Requests' },
-  { key: 'reviewer', label: '📋 Reviewer — Revisa código', description: 'Revisão de qualidade, compliance GDPR/SOC2, segurança' },
-  { key: 'executor', label: '🚀 Executor — Pode mergear', description: 'Merge de PRs (requer aprovação para operações críticas)' },
+  { 
+    key: 'legacyAssist', 
+    label: '🛡️ LegacyAssist — Guardião Técnico', 
+    description: 'Agente autônomo: analisa → planeja → age → observa → corrige. Usa ferramentas automaticamente.',
+    primary: true,
+  },
+  // Agentes abaixo são chamados pelo LegacyAssist conforme necessidade
+  { 
+    key: 'advisor', 
+    label: '📊 Advisor', 
+    description: 'Análise profunda de código e arquitetura (chamado automaticamente)',
+    internal: true,
+  },
+  { 
+    key: 'reviewer', 
+    label: '👁️ Reviewer', 
+    description: 'Revisão de código e compliance (chamado automaticamente)',
+    internal: true,
+  },
+  { 
+    key: 'operator', 
+    label: '🔧 Operator', 
+    description: 'Cria branches e PRs (chamado automaticamente)',
+    internal: true,
+  },
+  { 
+    key: 'executor', 
+    label: '⚡ Executor', 
+    description: 'Executa no sandbox (chamado automaticamente)',
+    internal: true,
+  },
+  { 
+    key: 'twin-builder', 
+    label: '🧬 Twin Builder', 
+    description: 'Reproduz incidentes (chamado automaticamente)',
+    internal: true,
+  },
 ];
 
 interface AgentSelectorProps {

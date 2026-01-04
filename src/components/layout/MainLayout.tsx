@@ -3,9 +3,8 @@
 import { useState, useEffect, useCallback } from "react"
 import { useSession } from "next-auth/react"
 import Sidebar from "./Sidebar"
-import ChatContainer from "../chat/ChatContainer"
+import AssistContainer from "../chat/AssistContainer"
 import SettingsPanel from "../settings/SettingsPanel"
-import LegacyAssistOverlay from "../assist/LegacyAssistOverlay"
 import { useOnboarding } from "../OnboardingTour"
 import OnboardingTour from "../OnboardingTour"
 
@@ -63,27 +62,13 @@ export default function MainLayout() {
   const [sessionsLoading, setSessionsLoading] = useState(false)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
 
-  // LegacyAssist state
-  const [assistActive, setAssistActive] = useState(false)
-  const [assistStep, setAssistStep] = useState<string | null>(null)
-  const [pendingAssistAction, setPendingAssistAction] = useState<string | null>(null)
-
-  // Quick action from sidebar -> ChatContainer
-  const [quickAgentRole, setQuickAgentRole] = useState<string | null>(null)
+  // Quick action from sidebar (simplified - LegacyAssist handles routing)
   const [quickPrompt, setQuickPrompt] = useState<string | null>(null)
 
   // Handler for sidebar quick actions
   const handleQuickAction = useCallback((action: string) => {
-    // action pode ser: agentRole (orchestrate, chat, etc) ou prompt completo
-    const agentKeys = ['legacyAssist', 'chat', 'orchestrate', 'advisor', 'operator', 'reviewer', 'executor']
-    if (agentKeys.includes(action)) {
-      setQuickAgentRole(action)
-      setQuickPrompt(null)
-    } else {
-      // É um prompt - usar orchestrate para ações complexas
-      setQuickPrompt(action)
-      setQuickAgentRole('orchestrate')
-    }
+    // LegacyAssist é inteligente o suficiente para rotear automaticamente
+    setQuickPrompt(action)
     // Fechar sidebar em mobile
     if (isMobile) setSidebarOpen(false)
   }, [isMobile])
@@ -192,18 +177,6 @@ export default function MainLayout() {
     [isMobile],
   )
 
-  const handleAssistAction = useCallback((step: string) => {
-    // Ações específicas do LegacyAssist (rag, web, brainstorm, twin, sandbox, orchestrate)
-    const actionIds = ["rag", "web", "brainstorm", "twin", "sandbox", "orchestrate"]
-    if (actionIds.includes(step)) {
-      // Dispara a ação para o ChatContainer executar
-      setPendingAssistAction(step)
-    } else {
-      // Apenas muda o step do overlay
-      setAssistStep(step)
-    }
-  }, [])
-
   const toggleSidebar = useCallback(() => {
     if (isMobile) {
       setSidebarOpen(!sidebarOpen)
@@ -241,23 +214,15 @@ export default function MainLayout() {
         />
       )}
 
-      {/* Main content */}
+      {/* Main content - LegacyAssist como único modo */}
       <main className="flex-1 flex flex-col min-w-0 relative">
-        <ChatContainer
+        <AssistContainer
           session={session}
           settings={settings}
           isMobile={isMobile}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={toggleSidebar}
           onOpenSettings={() => setSettingsOpen(true)}
-          assistActive={assistActive}
-          onAssistToggle={setAssistActive}
-          onAssistAction={handleAssistAction}
-          pendingAssistAction={pendingAssistAction}
-          onAssistActionConsumed={() => setPendingAssistAction(null)}
-          quickAgentRole={quickAgentRole}
-          quickPrompt={quickPrompt}
-          onQuickActionConsumed={() => { setQuickAgentRole(null); setQuickPrompt(null); }}
         />
       </main>
 
@@ -268,11 +233,6 @@ export default function MainLayout() {
         settings={settings}
         onUpdateSettings={handleUpdateSettings}
       />
-
-      {/* LegacyAssist Overlay */}
-      {assistActive && assistStep && (
-        <LegacyAssistOverlay step={assistStep} onClose={() => setAssistStep(null)} onAction={handleAssistAction} />
-      )}
 
       {/* Onboarding Tour */}
       <OnboardingTour
