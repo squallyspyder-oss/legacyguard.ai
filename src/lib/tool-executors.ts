@@ -12,6 +12,13 @@ import fs from 'fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 import { exec as cpExec } from 'child_process';
+import crypto from 'crypto';
+import {
+  buildExecutionPlan,
+  indexConversation,
+  type ConversationTurn,
+  type ExecutionStep,
+} from './execution-journal';
 
 // Guardian Flow imports (apenas os que usam tipos simples)
 import {
@@ -86,6 +93,65 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
         stderr: err?.stderr || err?.message || 'semgrep failed',
       };
     }
+  }
+
+  // Deterministic runner: execute the same command N times inside sandbox and compare hashes
+  async function runDeterministicRuns(params: {
+    command: string;
+    runs?: number;
+    timeoutSec?: number;
+  }) {
+    const runs = params.runs && params.runs > 0 ? params.runs : 5;
+    const timeoutMs = (params.timeoutSec && params.timeoutSec > 0 ? params.timeoutSec : 30) * 1000;
+    const executions: Array<{ stdout: string; stderr: string; exitCode: number; hash: string; durationMs: number }> = [];
+
+    for (let i = 0; i < runs; i++) {
+      const result = await runSandbox({
+        enabled: true,
+        repoPath: baseDir,
+        command: params.command,
+        timeoutMs,
+        failMode: 'fail',
+        isolationProfile: 'strict',
+        networkPolicy: 'none',
+        fsPolicy: 'readonly',
+        useDocker: true,
+      });
+
+      const hash = crypto
+        .createHash('sha256')
+        .update(result.stdout || '')
+        .update(result.stderr || '')
+        .update(String(result.exitCode ?? 0))
+        .digest('hex');
+
+      executions.push({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        hash,
+      });
+
+      if (!result.success) {
+        return {
+          success: false,
+          consistent: false,
+          reason: `Run ${i + 1}/${runs} failed with exitCode ${result.exitCode}`,
+          executions,
+        };
+      }
+    }
+
+    const firstHash = executions[0]?.hash;
+    const consistent = executions.every((e) => e.hash === firstHash);
+
+    return {
+      success: consistent,
+      consistent,
+      reason: consistent ? 'All runs consistent' : 'Output mismatch between runs',
+      executions,
+    };
   }
 
   return {
@@ -507,11 +573,55 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
     },
 
     // ========================================================================
+    // buildExecutionPlan - Gerar plano de execução
+    // ========================================================================
+    async buildExecutionPlan(params: {
+      intent: string;
+      objectives: string[];
+      safetyLevel?: number;
+      steps: ExecutionStep[];
+      approver?: string;
+      notes?: string;
+      sources?: string[];
+    }) {
+      try {
+        const plan = buildExecutionPlan(params);
+        return JSON.stringify({ success: true, ...plan });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return JSON.stringify({ success: false, error: `Erro ao gerar plano: ${message}` });
+      }
+    },
+
+    // ========================================================================
+    // indexConversation - Registrar transcript + plano
+    // ========================================================================
+    async indexConversation(params: {
+      planId: string;
+      conversation?: ConversationTurn[];
+      planMarkdown?: string;
+      repoPath?: string;
+    }) {
+      try {
+        const { filePath } = await indexConversation({
+          planId: params.planId,
+          conversation: params.conversation || [],
+          planMarkdown: params.planMarkdown,
+          repoPath: params.repoPath || baseDir,
+        });
+        return JSON.stringify({ success: true, filePath });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return JSON.stringify({ success: false, error: `Erro ao indexar conversa: ${message}` });
+      }
+    },
+
+    // ========================================================================
     // GUARDIAN FLOW TOOLS
     // ========================================================================
 
     // guardianFlow - Interação com sistema de segurança
-    async guardianFlow({ action, intent, code, filePaths, reason }) {
+    async guardianFlow({ action, intent, code, command, filePaths, reason }) {
       if (!config.guardianFlowEnabled) {
         // Guardian Flow desabilitado - retorna modo permissivo
         return JSON.stringify({
@@ -582,20 +692,36 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
           }
 
           case 'runDeterministic': {
-            if (!code) {
-              return JSON.stringify({ success: false, error: 'Code é obrigatório para runDeterministic' });
+            if (!code && !command) {
+              return JSON.stringify({ success: false, error: 'Informe code ou command para runDeterministic' });
             }
-            // Validação determinística simulada
-            // Em produção, executaria o código N vezes
+
+            // Construir comando seguro. Se code for fornecido, empacotar em node -e via base64 para evitar escape.
+            const finalCommand = command
+              ? command
+              : (() => {
+                  const b64 = Buffer.from(code || '', 'utf8').toString('base64');
+                  return `node -e "const c=Buffer.from('${b64}','base64').toString('utf8'); eval(c);"`;
+                })();
+
+            const deterministic = await runDeterministicRuns({ command: finalCommand, runs: 5, timeoutSec: 30 });
+            const runsCompleted = deterministic.executions?.length || 0;
+
             return JSON.stringify({
-              success: true,
+              success: deterministic.success,
               action: 'runDeterministic',
               gate: 'deterministic_validation',
-              passed: true,
-              consistency: 100,
-              runsCompleted: 10,
-              message: 'Validação determinística simulada - 10/10 execuções consistentes',
-              note: 'Integre com sandbox para validação real',
+              passed: deterministic.success,
+              consistency: deterministic.consistent ? 100 : 0,
+              runsCompleted,
+              message: deterministic.reason,
+              executions: deterministic.executions?.map((e) => ({
+                exitCode: e.exitCode,
+                durationMs: e.durationMs,
+                hash: e.hash,
+                stdoutSample: (e.stdout || '').slice(0, 4000),
+                stderrSample: (e.stderr || '').slice(0, 4000),
+              })),
             });
           }
 

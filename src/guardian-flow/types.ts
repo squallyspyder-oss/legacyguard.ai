@@ -373,6 +373,9 @@ export interface GuardianFlowRequest {
     maxLOA?: LOALevel;
     skipSafetyGates?: SafetyGateType[];
     dryRun?: boolean;
+    deterministicCommand?: string;
+    deterministicCode?: string;
+    deterministicRuns?: number;
   };
 }
 

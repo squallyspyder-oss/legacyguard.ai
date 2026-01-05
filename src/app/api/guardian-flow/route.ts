@@ -17,7 +17,10 @@ import {
 import {
   classifyIntent,
   validateIntent,
+  validateDeterministic,
 } from '@/guardian-flow';
+import { TIMEOUTS } from '@/guardian-flow/constants';
+import { runSandbox } from '@/lib/sandbox';
 import { logEvent } from '@/lib/audit';
 
 // =============================================================================
@@ -51,6 +54,12 @@ function validateRequest(body: unknown): body is GuardianFlowRequest {
   if (req.options && typeof req.options !== 'object') {
     return false;
   }
+  if (req.options) {
+    const opts = req.options as Record<string, unknown>;
+    if (opts.deterministicRuns !== undefined && typeof opts.deterministicRuns !== 'number') return false;
+    if (opts.deterministicCommand !== undefined && typeof opts.deterministicCommand !== 'string') return false;
+    if (opts.deterministicCode !== undefined && typeof opts.deterministicCode !== 'string') return false;
+  }
   
   return true;
 }
@@ -81,6 +90,7 @@ export async function POST(request: NextRequest) {
     }
     
     const { intent, context, options } = body;
+    const repoPath = context?.repositoryPath || process.cwd();
     
     // Audit log
     await logEvent({
@@ -97,19 +107,16 @@ export async function POST(request: NextRequest) {
     // 1. Classificar intenção
     const classification = classifyIntent(intent);
     
+    const events: FlowEvent[] = [createEvent('flow_started', { intent })];
+    
     // 2. Verificar LOA máximo permitido
     if (options?.maxLOA && classification.loaLevel > options.maxLOA) {
+      events.push(createEvent('loa_classified', { level: classification.loaLevel, requiredAgents: classification.requiredAgents }));
+      events.push(createEvent('flow_failed', { reason: 'LOA_EXCEEDED' }));
       const response: GuardianFlowResponse = {
         flowId,
         status: 'failed',
-        events: [
-          createEvent('flow_started', { intent }),
-          createEvent('loa_classified', { 
-            level: classification.loaLevel,
-            requiredAgents: classification.requiredAgents,
-          }),
-          createEvent('flow_failed', { reason: 'LOA_EXCEEDED' }),
-        ],
+        events,
         error: {
           code: ERROR_CODES.LOA_EXCEEDED,
           message: `Esta ação requer LOA ${classification.loaLevel}, mas o máximo permitido é ${options.maxLOA}`,
@@ -127,17 +134,12 @@ export async function POST(request: NextRequest) {
     });
     
     if (!intentValidation.passed) {
+      events.push(createEvent('safety_gate_failed', { gate: 'intent_validation', message: intentValidation.message }));
+      events.push(createEvent('flow_failed', { reason: 'INTENT_UNCLEAR' }));
       const response: GuardianFlowResponse = {
         flowId,
         status: 'failed',
-        events: [
-          createEvent('flow_started', { intent }),
-          createEvent('safety_gate_failed', { 
-            gate: 'intent_validation', 
-            message: intentValidation.message,
-          }),
-          createEvent('flow_failed', { reason: 'INTENT_UNCLEAR' }),
-        ],
+        events,
         error: {
           code: ERROR_CODES.INTENT_UNCLEAR,
           message: intentValidation.message,
@@ -147,45 +149,81 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 400 });
     }
     
+    events.push(
+      createEvent('intent_detected', { intent: classification.intent, confidence: classification.confidence }),
+      createEvent('loa_classified', { level: classification.loaLevel, requiredAgents: classification.requiredAgents }),
+      createEvent('safety_gate_passed', { gate: 'intent_validation' }),
+    );
+    
+    // 3.1 Gate determinístico opcional
+    if (options?.deterministicCommand || options?.deterministicCode) {
+      const finalCommand = options.deterministicCommand
+        ? options.deterministicCommand
+        : (() => {
+            const b64 = Buffer.from(options?.deterministicCode || '', 'utf8').toString('base64');
+            return `node -e "const c=Buffer.from('${b64}','base64').toString('utf8'); eval(c);"`;
+          })();
+      const detResult = await validateDeterministic({
+        runs: options.deterministicRuns,
+        executor: async () => {
+          const res = await runSandbox({
+            enabled: true,
+            repoPath,
+            command: finalCommand,
+            timeoutMs: TIMEOUTS.SANDBOX_EXECUTION,
+            failMode: 'fail',
+            isolationProfile: 'strict',
+            networkPolicy: 'none',
+            fsPolicy: 'readonly',
+            useDocker: true,
+          });
+          return {
+            success: res.success && res.exitCode === 0,
+            output: `${res.stdout || ''}\n${res.stderr || ''}\nexit:${res.exitCode ?? 0}`,
+          };
+        },
+      });
+
+      events.push(
+        createEvent(detResult.passed ? 'safety_gate_passed' : 'safety_gate_failed', {
+          gate: 'deterministic_check',
+          message: detResult.message,
+          consistency: detResult.validation.consistencyScore,
+          uniqueHashes: detResult.details?.uniqueHashes,
+        })
+      );
+
+      if (!detResult.passed) {
+        const response: GuardianFlowResponse = {
+          flowId,
+          status: 'failed',
+          events,
+          error: {
+            code: ERROR_CODES.DETERMINISTIC_FAILED,
+            message: detResult.message,
+            details: detResult.details,
+          },
+        };
+        return NextResponse.json(response, { status: 400 });
+      }
+    }
+    
     // 4. Se LOA >= 2, retornar para aprovação
     if (classification.loaLevel >= 2) {
+      events.push(createEvent('approval_requested', {
+        loaLevel: classification.loaLevel,
+        reason: `Ação de LOA ${classification.loaLevel} requer aprovação humana`,
+        agents: classification.requiredAgents,
+      }));
       const response: GuardianFlowResponse = {
         flowId,
         status: 'awaiting_approval',
-        events: [
-          createEvent('flow_started', { intent }),
-          createEvent('intent_detected', { 
-            intent: classification.intent, 
-            confidence: classification.confidence,
-          }),
-          createEvent('loa_classified', { 
-            level: classification.loaLevel,
-            requiredAgents: classification.requiredAgents,
-          }),
-          createEvent('safety_gate_passed', { gate: 'intent_validation' }),
-          createEvent('approval_requested', {
-            loaLevel: classification.loaLevel,
-            reason: `Ação de LOA ${classification.loaLevel} requer aprovação humana`,
-            agents: classification.requiredAgents,
-          }),
-        ],
+        events,
       };
       return NextResponse.json(response, { status: 200 });
     }
     
     // 5. LOA 1: Executar automaticamente (dry run por padrão)
-    const events: FlowEvent[] = [
-      createEvent('flow_started', { intent }),
-      createEvent('intent_detected', { 
-        intent: classification.intent, 
-        confidence: classification.confidence,
-      }),
-      createEvent('loa_classified', { 
-        level: classification.loaLevel,
-        requiredAgents: classification.requiredAgents,
-      }),
-      createEvent('safety_gate_passed', { gate: 'intent_validation' }),
-    ];
     
     // Simular execução de agentes
     for (const agent of classification.requiredAgents) {

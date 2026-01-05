@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import {
   classifyIntent,
   createInitialState,
@@ -36,6 +37,10 @@ import {
   calculateXPReward,
 } from '@/guardian-flow/gamification/MissionSystem';
 import { GuardianProfile, Mission } from '@/guardian-flow/types';
+import { POST as GuardianFlowPost } from '@/app/api/guardian-flow/route';
+
+vi.mock('@/lib/audit', () => ({ __esModule: true, logEvent: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/lib/sandbox', () => ({ __esModule: true, runSandbox: vi.fn() }));
 
 // =============================================================================
 // INTENT CLASSIFIER TESTS
@@ -197,6 +202,84 @@ describe('Safety Gates', () => {
       
       expect(result.passed).toBe(true);
     });
+  });
+});
+
+// =============================================================================
+// API ROUTE - DETERMINISTIC GATE
+// =============================================================================
+
+describe('Guardian Flow API - deterministic gate', () => {
+  let runSandboxMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    const sandbox = await import('@/lib/sandbox');
+    runSandboxMock = vi.mocked(sandbox.runSandbox);
+    runSandboxMock.mockReset();
+  });
+
+  it('aprova quando execuções são consistentes e retorna awaiting_approval', async () => {
+    runSandboxMock.mockResolvedValue({
+      success: true,
+      exitCode: 0,
+      stdout: 'ok',
+      stderr: '',
+      durationMs: 5,
+      method: 'docker',
+    });
+
+    const req = new NextRequest('http://localhost/api/guardian-flow', {
+      method: 'POST',
+      body: JSON.stringify({
+        intent: 'format documentation',
+        options: {
+          deterministicCode: 'console.log("ok")',
+          deterministicRuns: 3,
+        },
+      }),
+    });
+
+    const res = await GuardianFlowPost(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.status).toBe('completed');
+    expect(json.events.some((e: any) => e.type === 'safety_gate_passed' && e.data.gate === 'deterministic_check')).toBe(true);
+    expect(runSandboxMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('falha quando execuções divergem e retorna DETERMINISTIC_FAILED', async () => {
+    const outputs = ['a', 'b', 'a'];
+    runSandboxMock.mockImplementation(() => {
+      const out = outputs.shift() || 'a';
+      return Promise.resolve({
+        success: true,
+        exitCode: 0,
+        stdout: out,
+        stderr: '',
+        durationMs: 5,
+        method: 'docker',
+      });
+    });
+
+    const req = new NextRequest('http://localhost/api/guardian-flow', {
+      method: 'POST',
+      body: JSON.stringify({
+        intent: 'format documentation',
+        options: {
+          deterministicCode: 'console.log(Math.random())',
+          deterministicRuns: 3,
+        },
+      }),
+    });
+
+    const res = await GuardianFlowPost(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error?.code).toBe('DETERMINISTIC_FAILED');
+    expect(json.events.some((e: any) => e.type === 'safety_gate_failed' && e.data.gate === 'deterministic_check')).toBe(true);
+    expect(runSandboxMock).toHaveBeenCalledTimes(3);
   });
 });
 

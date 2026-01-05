@@ -35,6 +35,12 @@ import {
   generateDailyMissions,
   type Mission,
 } from '../guardian-flow';
+import {
+  buildExecutionPlan,
+  indexConversation,
+  type ConversationTurn,
+  type ExecutionStep,
+} from './execution-journal';
 
 // ============================================================================
 // TIPOS E INTERFACES
@@ -97,6 +103,10 @@ export interface AgentOutput {
   };
   modelUsed: string;
 }
+
+// Expor helpers de plano e indexação de conversa para uso interno do LLM
+export { buildExecutionPlan, indexConversation };
+export type { ConversationTurn, ExecutionStep };
 
 // ============================================================================
 // FERRAMENTAS DISPONÍVEIS (TOOL DEFINITIONS)
@@ -237,6 +247,65 @@ export const AGENT_TOOLS: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'buildExecutionPlan',
+      description: 'Gera um plano de execução estruturado (markdown) para a tarefa atual e retorna um ID de plano.',
+      parameters: {
+        type: 'object',
+        properties: {
+          intent: { type: 'string', description: 'Intenção principal (resumo da tarefa)' },
+          objectives: { type: 'array', items: { type: 'string' }, description: 'Lista de objetivos' },
+          safetyLevel: { type: 'number', description: 'Nível de segurança/LOA percebido (opcional)' },
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                detail: { type: 'string' },
+              },
+              required: ['title', 'detail'],
+            },
+            description: 'Passos do plano',
+          },
+          approver: { type: 'string', description: 'Aprovador humano, se houver' },
+          notes: { type: 'string', description: 'Notas adicionais' },
+          sources: { type: 'array', items: { type: 'string' }, description: 'Fontes/referências' },
+        },
+        required: ['intent', 'objectives', 'steps'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'indexConversation',
+      description: 'Indexa o plano e o transcript da conversa em docs/conversas/{planId}.md para recuperação futura.',
+      parameters: {
+        type: 'object',
+        properties: {
+          planId: { type: 'string', description: 'ID do plano (use o retorno de buildExecutionPlan)' },
+          conversation: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                role: { type: 'string', enum: ['user', 'assistant', 'tool'] },
+                content: { type: 'string' },
+              },
+              required: ['role', 'content'],
+            },
+            description: 'Transcript da conversa. Se omitido, o runtime preencherá com o histórico atual.',
+          },
+          planMarkdown: { type: 'string', description: 'Markdown do plano para ser salvo junto' },
+          repoPath: { type: 'string', description: 'Caminho raiz do repositório (opcional)' },
+        },
+        required: ['planId'],
+      },
+    },
+  },
   // ========================================================================
   // GUARDIAN FLOW TOOLS
   // ========================================================================
@@ -255,6 +324,7 @@ export const AGENT_TOOLS: ChatCompletionTool[] = [
           },
           intent: { type: 'string', description: 'Intenção do usuário (para classify/validateIntent)' },
           code: { type: 'string', description: 'Código a validar (para runDeterministic/securityScan)' },
+          command: { type: 'string', description: 'Comando completo a validar determinismo (opcional)' },
           filePaths: { type: 'array', items: { type: 'string' }, description: 'Arquivos afetados (para checkBlastRadius)' },
           reason: { type: 'string', description: 'Justificativa (para requestApproval)' },
         },
@@ -543,6 +613,21 @@ export interface ToolExecutor {
   analyzeCode: (params: { filePath: string; checks?: string[] }) => Promise<string>;
   readFile: (params: { path: string; startLine?: number; endLine?: number }) => Promise<string>;
   listFiles: (params: { path: string; pattern?: string; recursive?: boolean }) => Promise<string>;
+  buildExecutionPlan: (params: {
+    intent: string;
+    objectives: string[];
+    safetyLevel?: number;
+    steps: ExecutionStep[];
+    approver?: string;
+    notes?: string;
+    sources?: string[];
+  }) => Promise<string>;
+  indexConversation: (params: {
+    planId: string;
+    conversation?: ConversationTurn[];
+    planMarkdown?: string;
+    repoPath?: string;
+  }) => Promise<string>;
   
   // Ferramentas de Execução
   runSandbox: (params: { command: string; workdir?: string; timeout?: number }) => Promise<string>;
@@ -554,6 +639,7 @@ export interface ToolExecutor {
     action: 'classify' | 'validateIntent' | 'checkBlastRadius' | 'runDeterministic' | 'securityScan' | 'requestApproval';
     intent?: string;
     code?: string;
+    command?: string;
     filePaths?: string[];
     reason?: string;
   }) => Promise<string>;
@@ -610,6 +696,8 @@ export class AgentRuntime {
   private sessionState: SessionState;
   private executor: ToolExecutor;
   private model: string;
+  private conversationLog: ConversationTurn[];
+  private lastPlan?: { planId: string; markdown: string };
   
   constructor(executor: ToolExecutor, initialState?: Partial<SessionState>) {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -622,6 +710,7 @@ export class AgentRuntime {
       activeTasks: [],
       ...initialState,
     };
+    this.conversationLog = [];
   }
   
   async run(userMessage: string, maxIterations: number = 5): Promise<AgentOutput> {
@@ -629,6 +718,7 @@ export class AgentRuntime {
       { role: 'system', content: buildAgentSystemPrompt(this.sessionState) },
       { role: 'user', content: userMessage },
     ];
+    this.conversationLog = [{ role: 'user', content: userMessage }];
     
     const toolsUsed: ToolResult[] = [];
     let thinking: ThinkingBlock | null = null;
@@ -658,6 +748,10 @@ export class AgentRuntime {
       if (!thinking && message.content) {
         thinking = this.parseThinking(message.content);
       }
+
+      if (typeof message.content === 'string') {
+        this.conversationLog.push({ role: 'assistant', content: message.content });
+      }
       
       // Se não houver tool calls, terminamos
       if (!message.tool_calls || message.tool_calls.length === 0) {
@@ -678,9 +772,33 @@ export class AgentRuntime {
           name: funcName,
           arguments: JSON.parse(funcArgs || '{}'),
         };
+
+        if (parsed.name === 'indexConversation') {
+          const args = parsed.arguments as Record<string, unknown>;
+          if (!('conversation' in args)) {
+            (parsed.arguments as Record<string, unknown>).conversation = this.conversationLog;
+          }
+          if (!('planMarkdown' in args) && this.lastPlan?.markdown) {
+            (parsed.arguments as Record<string, unknown>).planMarkdown = this.lastPlan.markdown;
+          }
+          if (!('repoPath' in args) && this.sessionState.repoPath) {
+            (parsed.arguments as Record<string, unknown>).repoPath = this.sessionState.repoPath;
+          }
+        }
         
         const result = await executeToolCall(parsed, this.executor);
         toolsUsed.push(result);
+
+        if (parsed.name === 'buildExecutionPlan') {
+          try {
+            const parsedResult = JSON.parse(result.result);
+            if (parsedResult.planId && parsedResult.markdown) {
+              this.lastPlan = { planId: parsedResult.planId, markdown: parsedResult.markdown };
+            }
+          } catch { /* ignore parse errors */ }
+        }
+        
+        this.conversationLog.push({ role: 'tool', content: result.result });
         
         // Atualizar estado da sessão
         this.updateSessionState(parsed, result);
