@@ -10,6 +10,8 @@ import { getRAGIndexer } from './rag-indexer';
 import { runSandbox } from './sandbox';
 import fs from 'fs/promises';
 import path from 'path';
+import { promisify } from 'util';
+import { exec as cpExec } from 'child_process';
 
 // Guardian Flow imports (apenas os que usam tipos simples)
 import {
@@ -42,6 +44,49 @@ interface RAGResult {
  */
 export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
   const baseDir = config.repoPath || process.cwd();
+  const execAsync = promisify(cpExec);
+
+  async function runSemgrepScan(repoPath: string) {
+    if (process.env.LEGACYGUARD_FORCE_DOCKER !== 'true') {
+      // rely on docker availability; if absent, return error
+      try {
+        await execAsync('docker version --format "{{.Server.Version}}"', { timeout: 2000 });
+      } catch (err) {
+        return {
+          success: false,
+          findings: [],
+          stderr: 'Docker not available for semgrep scan',
+        };
+      }
+    }
+
+    const cmd = [
+      'docker run --rm',
+      '--network=none',
+      '-v', `${repoPath}:/src:ro`,
+      'returntocorp/semgrep:latest',
+      'semgrep --config auto --json --timeout 45 --exclude node_modules --exclude .git /src',
+    ].join(' ');
+
+    try {
+      const { stdout, stderr } = await execAsync(cmd, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+      const parsed = JSON.parse(stdout || '{}');
+      const findings = Array.isArray(parsed.results) ? parsed.results.map((r: any) => ({
+        severity: r.extra?.severity || 'unknown',
+        type: r.check_id || 'unknown',
+        message: r.extra?.message || 'No message',
+        path: r.path,
+        start: r.start?.line,
+      })) : [];
+      return { success: true, findings, stderr };
+    } catch (err: any) {
+      return {
+        success: false,
+        findings: [],
+        stderr: err?.stderr || err?.message || 'semgrep failed',
+      };
+    }
+  }
 
   return {
     // ========================================================================
@@ -555,37 +600,24 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
           }
 
           case 'securityScan': {
-            const codeToScan = code || '';
-            // Scan de segurança simplificado
-            const findings: Array<{severity: string; type: string; message: string}> = [];
-            
-            // Padrões de risco
-            if (/eval\s*\(/.test(codeToScan)) {
-              findings.push({ severity: 'critical', type: 'code_injection', message: 'Uso de eval() detectado' });
-            }
-            if (/password\s*=\s*["'][^"']+["']/i.test(codeToScan)) {
-              findings.push({ severity: 'critical', type: 'hardcoded_credential', message: 'Senha hardcoded' });
-            }
-            if (/api[_-]?key\s*=\s*["'][^"']+["']/i.test(codeToScan)) {
-              findings.push({ severity: 'critical', type: 'hardcoded_credential', message: 'API key hardcoded' });
-            }
-            if (/innerHTML\s*=/.test(codeToScan)) {
-              findings.push({ severity: 'high', type: 'xss', message: 'Uso de innerHTML' });
-            }
-            
-            const criticalCount = findings.filter(f => f.severity === 'critical').length;
-            const passed = criticalCount === 0;
-            
+            const scan = await runSemgrepScan(baseDir);
+            const criticalCount = scan.findings.filter((f: any) => (f.severity || '').toLowerCase() === 'critical').length;
+            const highCount = scan.findings.filter((f: any) => (f.severity || '').toLowerCase() === 'high').length;
+            const passed = scan.success && criticalCount === 0 && highCount === 0;
+
             return JSON.stringify({
-              success: true,
+              success: scan.success,
               action: 'securityScan',
               gate: 'security_scan',
               passed,
-              findings,
+              findings: scan.findings,
               criticalCount,
-              message: passed 
-                ? 'Nenhuma vulnerabilidade crítica encontrada'
-                : `${criticalCount} vulnerabilidade(s) crítica(s) detectada(s)`,
+              highCount,
+              message: !scan.success
+                ? `Falha ao rodar semgrep: ${scan.stderr || 'erro'}`
+                : passed
+                  ? 'Nenhuma vulnerabilidade crítica/alta encontrada'
+                  : `${criticalCount + highCount} achados críticos/altos detectados`,
             });
           }
 
