@@ -490,16 +490,10 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
     };
   }
 
-  // Priority: Docker > Shell script > Native
+  // Execution Guard: somente Docker com isolamento estrito. Sem fallback para shell/native.
   const dockerAvailable = config.useDocker !== false && (await isDockerAvailable());
-  const shellAvailable = isShellRunnerAvailable(config.runnerPath) && process.platform !== 'win32';
-  
-  // MANIFESTO Regra 6: Sandbox deve isolar. Se Docker não disponível, verificar se bypass é permitido.
-  const allowNativeExec = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC === 'true';
-  
-  if (!dockerAvailable && !allowNativeExec) {
-    // Sem Docker e sem bypass explícito - FALHAR
-    const errorMsg = 'Docker não disponível para sandbox. Defina LEGACYGUARD_ALLOW_NATIVE_EXEC=true para permitir execução sem isolamento (NÃO RECOMENDADO EM PRODUÇÃO).';
+  if (!dockerAvailable) {
+    const errorMsg = 'Docker não disponível para sandbox. Execução bloqueada (sem fallback).';
     log(`[Sandbox] ❌ ERRO: ${errorMsg}`);
     return {
       success: false,
@@ -512,21 +506,16 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
     };
   }
 
-  let result: SandboxResult;
+  // Forçar políticas restritivas: rede none, FS readonly, perfis estritos, sempre Docker
+  const strictConfig: SandboxConfig = {
+    ...config,
+    useDocker: true,
+    isolationProfile: 'strict',
+    networkPolicy: 'none',
+    fsPolicy: 'readonly',
+  };
 
-  if (dockerAvailable) {
-    log('[Sandbox] Using Docker isolation');
-    result = await runDockerSandbox(config);
-  } else if (shellAvailable) {
-    log('[Sandbox] ⚠️ Docker não disponível, usando shell runner (isolamento limitado)');
-    log('[Sandbox] AVISO: Shell runner não oferece isolamento real de rede/recursos');
-    result = await runShellSandbox(config);
-  } else {
-    // Native só se LEGACYGUARD_ALLOW_NATIVE_EXEC=true (já verificado acima)
-    log('[Sandbox] ⚠️⚠️ ATENÇÃO: Executando SEM ISOLAMENTO (native)');
-    log('[Sandbox] Isso só é permitido porque LEGACYGUARD_ALLOW_NATIVE_EXEC=true');
-    result = await runNativeSandbox(config);
-  }
+  const result = await runDockerSandbox(strictConfig);
 
   // Handle failure based on failMode
   if (!result.success && config.failMode === 'warn') {
@@ -548,12 +537,10 @@ export async function getSandboxCapabilities(): Promise<{
   recommended: 'docker' | 'shell' | 'native';
 }> {
   const docker = process.env.LEGACYGUARD_FORCE_DOCKER === 'true' ? true : await isDockerAvailable();
-  const shell = process.platform !== 'win32';
-
   return {
     docker,
-    shell,
-    recommended: docker ? 'docker' : shell ? 'shell' : 'native',
+    shell: false,
+    recommended: docker ? 'docker' : 'native',
   };
 }
 
