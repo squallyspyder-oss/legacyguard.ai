@@ -2,6 +2,7 @@
 // Falls back to shell script on Linux when available
 
 import { promisify } from 'util';
+import { runWithSnapshot } from './execution-pipeline';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let spawn: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -14,6 +15,12 @@ function ensureChildProcess() {
     spawn = cp.spawn;
     exec = cp.exec;
   }
+}
+
+// Test-only helper to inject mocks without touching the runtime require cache
+export function __setChildProcessForTests(mock: { spawn: any; exec: any }) {
+  spawn = mock.spawn;
+  exec = mock.exec;
 }
 import path from 'path';
 import fs from 'fs';
@@ -48,6 +55,9 @@ export type SandboxConfig = {
   memoryLimit?: string; // Docker memory limit (e.g., "1g")
   cpuLimit?: string; // Docker CPU limit (e.g., "1" for 1 vCPU)
   tmpfsSizeMb?: number; // Size for /tmp tmpfs
+  runtime?: string; // Docker runtime (e.g., runsc for gVisor)
+  image?: string; // Custom sandbox image
+  snapshotOnFail?: boolean; // Take snapshot and auto-rollback on failure (readwrite scenarios)
 };
 
 export type SandboxResult = {
@@ -171,6 +181,18 @@ async function isDockerAvailable(): Promise<boolean> {
   }
 }
 
+// Detect gVisor runsc runtime support
+async function isRunscAvailable(): Promise<boolean> {
+  try {
+    ensureChildProcess();
+    const execAsync = promisify(exec);
+    const { stdout } = await execAsync('docker info --format "{{json .Runtimes}}"', { timeout: 2000 });
+    return stdout?.includes('runsc') || false;
+  } catch {
+    return false;
+  }
+}
+
 // Check if shell runner exists
 function isShellRunnerAvailable(runnerPath?: string): boolean {
   if (!runnerPath) return false;
@@ -205,9 +227,10 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
   const profile = config.isolationProfile || 'strict';
   const networkPolicy = config.networkPolicy || (profile === 'strict' ? 'none' : 'bridge');
   const fsPolicy = config.fsPolicy || (profile === 'strict' ? 'readonly' : 'readwrite');
-  const memoryLimit = config.memoryLimit || (profile === 'strict' ? '1g' : '2g');
-  const cpuLimit = config.cpuLimit || (profile === 'strict' ? '1' : '2');
+  const memoryLimit = config.memoryLimit || (profile === 'strict' ? '512m' : '1g');
+  const cpuLimit = config.cpuLimit || (profile === 'strict' ? '0.5' : '2');
   const tmpfsSize = config.tmpfsSizeMb ?? (profile === 'strict' ? 256 : 512);
+  const runtime = config.runtime || process.env.LEGACYGUARD_SANDBOX_RUNTIME;
 
   // Determine base image based on language
   const lang = config.languageHint || (await detectLanguage(config.repoPath)) || 'javascript';
@@ -221,7 +244,7 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
     ruby: 'ruby:3.2-slim',
     php: 'php:8.2-cli',
   };
-  const image = imageMap[lang] || 'node:20-alpine';
+  const image = config.image || imageMap[lang] || 'node:20-alpine';
 
   log(`[Sandbox/Docker] Starting container with image: ${image}`);
   log(`[Sandbox/Docker] Command: ${command}`);
@@ -242,6 +265,7 @@ async function runDockerSandbox(config: SandboxConfig): Promise<SandboxResult> {
     const args = [
       'run',
       '--rm',
+      ...(runtime ? ['--runtime', runtime] : []),
       `--network=${networkPolicy}`,
       `--memory=${memoryLimit}`,
       `--cpus=${cpuLimit}`,
@@ -490,36 +514,80 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
     };
   }
 
-  // Execution Guard: somente Docker com isolamento estrito. Sem fallback para shell/native.
-  const dockerAvailable = config.useDocker !== false && (await isDockerAvailable());
-  if (!dockerAvailable) {
-    const errorMsg = 'Docker não disponível para sandbox. Execução bloqueada (sem fallback).';
-    log(`[Sandbox] ❌ ERRO: ${errorMsg}`);
-    return {
-      success: false,
-      exitCode: 1,
-      stdout: '',
-      stderr: errorMsg,
-      durationMs: 0,
-      method: 'native',
-      error: errorMsg,
+  const dockerRequested = config.useDocker !== false;
+  const dockerAvailable = dockerRequested && (await isDockerAvailable());
+  const shellAvailable = isShellRunnerAvailable(config.runnerPath);
+
+  let execute = async (): Promise<SandboxResult> => ({ success: false, exitCode: 1, stdout: '', stderr: 'not-run', durationMs: 0, method: 'native' });
+
+  if (dockerAvailable) {
+    // Forçar políticas restritivas: rede none, FS readonly, perfis estritos, sempre Docker
+    const preferredRuntime = config.runtime || process.env.LEGACYGUARD_SANDBOX_RUNTIME;
+    const runtime = preferredRuntime || (await isRunscAvailable() ? 'runsc' : undefined);
+
+    const strictConfig: SandboxConfig = {
+      ...config,
+      useDocker: true,
+      isolationProfile: 'strict',
+      networkPolicy: 'none',
+      fsPolicy: 'readonly',
+      runtime,
     };
+    execute = () => runDockerSandbox(strictConfig);
+  } else if (shellAvailable) {
+    log('[Sandbox] Docker indisponível; usando runner shell como fallback');
+    execute = () => runShellSandbox({
+      ...config,
+      // Shell runner already encapsulates its own policies
+      failMode: config.failMode,
+    });
+  } else {
+    log('[Sandbox] Docker indisponível; usando fallback nativo com timeout');
+    execute = () => runNativeSandbox(config);
   }
 
-  // Forçar políticas restritivas: rede none, FS readonly, perfis estritos, sempre Docker
-  const strictConfig: SandboxConfig = {
-    ...config,
-    useDocker: true,
-    isolationProfile: 'strict',
-    networkPolicy: 'none',
-    fsPolicy: 'readonly',
-  };
+  const defaultSnapshot = config.snapshotOnFail ?? (config.fsPolicy === 'readwrite');
+  const shouldSnapshot = defaultSnapshot && config.fsPolicy !== 'readonly';
+  let result: SandboxResult & { restored?: boolean };
 
-  const result = await runDockerSandbox(strictConfig);
+  if (shouldSnapshot) {
+    const snapResult = await runWithSnapshot({
+      repoPath: config.repoPath,
+      run: async () => {
+        const res = await execute();
+        if (!res.success) {
+          const err = new Error(res.stderr || res.error || 'Sandbox failed');
+          (err as any).sandboxResult = res;
+          throw err;
+        }
+        return res;
+      },
+    });
+
+    if (snapResult.success) {
+      result = snapResult.result as SandboxResult;
+    } else {
+      const res = (snapResult.error as any)?.sandboxResult as SandboxResult | undefined;
+      result = res
+        ? { ...res, success: false, restored: snapResult.restored }
+        : {
+            success: false,
+            exitCode: 1,
+            stdout: '',
+            stderr: snapResult.error instanceof Error ? snapResult.error.message : 'Sandbox failed',
+            durationMs: 0,
+            method: 'native',
+            error: snapResult.error instanceof Error ? snapResult.error.message : String(snapResult.error),
+            restored: snapResult.restored,
+          };
+    }
+  } else {
+    result = await execute();
+  }
 
   // Handle failure based on failMode
   if (!result.success && config.failMode === 'warn') {
-    log(`[Sandbox] Warning: Test failed but failMode=warn, continuing`);
+    log('[Sandbox] Warning: Execution failed but failMode=warn, continuing');
     result.success = true; // Override for orchestrator
   }
 
@@ -534,13 +602,20 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
 export async function getSandboxCapabilities(): Promise<{
   docker: boolean;
   shell: boolean;
+  native: boolean;
+  runsc: boolean;
   recommended: 'docker' | 'shell' | 'native';
 }> {
   const docker = process.env.LEGACYGUARD_FORCE_DOCKER === 'true' ? true : await isDockerAvailable();
+  const runsc = docker ? await isRunscAvailable() : false;
+  const shell = false; // No dedicated shell runner bundled by default
+  const native = true;
   return {
     docker,
-    shell: false,
-    recommended: docker ? 'docker' : 'native',
+    shell,
+    native,
+    runsc,
+    recommended: docker ? 'docker' : shell ? 'shell' : 'native',
   };
 }
 

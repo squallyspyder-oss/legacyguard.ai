@@ -48,6 +48,33 @@ CREATE TABLE IF NOT EXISTS query_cache (
   last_used_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Grafo de conhecimento (opcional)
+CREATE TABLE IF NOT EXISTS code_graph_nodes (
+  id SERIAL PRIMARY KEY,
+  repo_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  kind TEXT,
+  start_line INT,
+  end_line INT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (repo_id, path, symbol)
+);
+
+CREATE TABLE IF NOT EXISTS code_graph_edges (
+  id SERIAL PRIMARY KEY,
+  repo_id TEXT NOT NULL,
+  from_path TEXT NOT NULL,
+  from_symbol TEXT,
+  to_path TEXT NOT NULL,
+  to_symbol TEXT,
+  kind TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Tabela de repositórios indexados
 CREATE TABLE IF NOT EXISTS indexed_repos (
   id TEXT PRIMARY KEY,
@@ -84,6 +111,8 @@ CREATE INDEX IF NOT EXISTS idx_code_chunks_path ON code_chunks(path);
 CREATE INDEX IF NOT EXISTS idx_code_chunks_language ON code_chunks(language);
 CREATE INDEX IF NOT EXISTS idx_doc_chunks_repo ON doc_chunks(repo_id);
 CREATE INDEX IF NOT EXISTS idx_indexed_repos_status ON indexed_repos(status);
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_repo ON code_graph_nodes(repo_id);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_repo ON code_graph_edges(repo_id);
 
 -- Função para atualizar timestamp
 CREATE OR REPLACE FUNCTION update_updated_at()

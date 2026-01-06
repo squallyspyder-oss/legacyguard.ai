@@ -19,6 +19,11 @@ import {
   type ConversationTurn,
   type ExecutionStep,
 } from './execution-journal';
+import {
+  createApproval,
+  validateApproval,
+  initApprovalStore,
+} from './approval-store';
 
 // Guardian Flow imports (apenas os que usam tipos simples)
 import {
@@ -52,6 +57,109 @@ interface RAGResult {
 export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
   const baseDir = config.repoPath || process.cwd();
   const execAsync = promisify(cpExec);
+
+  /**
+   * Calcula blast radius real baseado em análise de dependências
+   * Considera: número de arquivos afetados, dependentes reversos, arquivos críticos
+   */
+  async function calculateRealBlastRadius(affectedFiles: string[]): Promise<{
+    score: number;
+    details: {
+      directFiles: number;
+      dependentFiles: number;
+      criticalFiles: string[];
+      riskFactors: { factor: string; weight: number }[];
+    };
+  }> {
+    if (affectedFiles.length === 0) {
+      return {
+        score: 0,
+        details: { directFiles: 0, dependentFiles: 0, criticalFiles: [], riskFactors: [] },
+      };
+    }
+
+    const riskFactors: { factor: string; weight: number }[] = [];
+    let baseScore = 0;
+
+    // Fator 1: Número de arquivos diretamente afetados
+    const directFiles = affectedFiles.length;
+    baseScore += Math.min(directFiles * 5, 30); // max 30 pontos
+    if (directFiles > 5) {
+      riskFactors.push({ factor: `${directFiles} arquivos diretamente afetados`, weight: 10 });
+    }
+
+    // Fator 2: Arquivos críticos (auth, db, config, security)
+    const criticalPatterns = [/auth/i, /security/i, /password/i, /secret/i, /config/i, /database/i, /migration/i];
+    const criticalFiles = affectedFiles.filter(f => criticalPatterns.some(p => p.test(f)));
+    if (criticalFiles.length > 0) {
+      baseScore += criticalFiles.length * 15; // 15 pontos por arquivo crítico
+      riskFactors.push({ factor: `${criticalFiles.length} arquivos críticos`, weight: criticalFiles.length * 15 });
+    }
+
+    // Fator 3: Analisar dependências reversas (quem importa esses arquivos?)
+    let dependentFiles = 0;
+    try {
+      for (const file of affectedFiles.slice(0, 5)) { // limitar para performance
+        const fileName = path.basename(file).replace(/\.(ts|js|tsx|jsx)$/, '');
+        // Buscar arquivos que importam este
+        const srcDir = path.join(baseDir, 'src');
+        const files = await findFilesRecursive(srcDir, /\.(ts|tsx|js|jsx)$/);
+        for (const srcFile of files) {
+          try {
+            const content = await fs.readFile(srcFile, 'utf-8');
+            if (content.includes(fileName) && srcFile !== path.join(baseDir, file)) {
+              dependentFiles++;
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      if (dependentFiles > 0) {
+        baseScore += Math.min(dependentFiles * 3, 30); // max 30 pontos
+        riskFactors.push({ factor: `${dependentFiles} arquivos dependentes`, weight: Math.min(dependentFiles * 3, 30) });
+      }
+    } catch { /* ignore errors in dependency analysis */ }
+
+    // Normalizar para 0-100
+    const finalScore = Math.min(baseScore, 100);
+
+    return {
+      score: finalScore,
+      details: {
+        directFiles,
+        dependentFiles,
+        criticalFiles,
+        riskFactors,
+      },
+    };
+  }
+
+  /**
+   * Busca arquivos recursivamente em um diretório
+   */
+  async function findFilesRecursive(dir: string, pattern: RegExp): Promise<string[]> {
+    const results: string[] = [];
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          results.push(...await findFilesRecursive(fullPath, pattern));
+        } else if (entry.isFile() && pattern.test(entry.name)) {
+          results.push(fullPath);
+        }
+      }
+    } catch { /* directory doesn't exist or not readable */ }
+    return results;
+  }
+
+  // Inicializar approval store
+  let approvalStoreInitialized = false;
+  async function ensureApprovalStore() {
+    if (!approvalStoreInitialized) {
+      await initApprovalStore(baseDir);
+      approvalStoreInitialized = true;
+    }
+  }
 
   async function runSemgrepScan(repoPath: string) {
     if (process.env.LEGACYGUARD_FORCE_DOCKER !== 'true') {
@@ -95,15 +203,67 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
     }
   }
 
+  function stableStringify(value: unknown): string {
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
+    if (typeof value !== 'object') return JSON.stringify(value);
+
+    if (Array.isArray(value)) {
+      return `[${value.map((v) => stableStringify(v)).join(',')}]`;
+    }
+
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+    const mapped = entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+    return `{${mapped.join(',')}}`;
+  }
+
+  function pickFieldsFromJSON(jsonText: string, fields: string[]): {
+    data?: Record<string, unknown>;
+    error?: string;
+  } {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonText || '{}');
+    } catch (err: any) {
+      return { error: `Structured comparison solicitado, mas stdout não é JSON: ${err?.message || err}` };
+    }
+
+    const output: Record<string, unknown> = {};
+    for (const field of fields) {
+      const parts = field.split('.').filter(Boolean);
+      let cursor: any = parsed;
+      for (const part of parts) {
+        if (cursor && Object.prototype.hasOwnProperty.call(cursor, part)) {
+          cursor = cursor[part];
+        } else {
+          cursor = undefined;
+          break;
+        }
+      }
+      output[field] = cursor;
+    }
+    return { data: output };
+  }
+
   // Deterministic runner: execute the same command N times inside sandbox and compare hashes
   async function runDeterministicRuns(params: {
     command: string;
     runs?: number;
     timeoutSec?: number;
+    structuredFields?: string[];
+    structuredSource?: 'stdout' | 'stderr';
   }) {
     const runs = params.runs && params.runs > 0 ? params.runs : 5;
     const timeoutMs = (params.timeoutSec && params.timeoutSec > 0 ? params.timeoutSec : 30) * 1000;
-    const executions: Array<{ stdout: string; stderr: string; exitCode: number; hash: string; durationMs: number }> = [];
+    const executions: Array<{
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      hash: string;
+      durationMs: number;
+      structured?: Record<string, unknown>;
+      hashSource: 'structured' | 'raw';
+    }> = [];
 
     for (let i = 0; i < runs; i++) {
       const result = await runSandbox({
@@ -118,10 +278,31 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
         useDocker: true,
       });
 
+      let hashInput = '';
+      let structured: Record<string, unknown> | undefined;
+      let hashSource: 'structured' | 'raw' = 'raw';
+
+      if (params.structuredFields && params.structuredFields.length > 0) {
+        const source = params.structuredSource === 'stderr' ? result.stderr : result.stdout;
+        const picked = pickFieldsFromJSON(source, params.structuredFields);
+        if (picked.error) {
+          return {
+            success: false,
+            consistent: false,
+            reason: picked.error,
+            executions,
+          };
+        }
+        structured = picked.data;
+        hashInput = stableStringify(structured);
+        hashSource = 'structured';
+      } else {
+        hashInput = `${result.stdout || ''}${result.stderr || ''}`;
+      }
+
       const hash = crypto
         .createHash('sha256')
-        .update(result.stdout || '')
-        .update(result.stderr || '')
+        .update(hashInput)
         .update(String(result.exitCode ?? 0))
         .digest('hex');
 
@@ -131,6 +312,8 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         hash,
+        structured,
+        hashSource,
       });
 
       if (!result.success) {
@@ -145,12 +328,15 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
 
     const firstHash = executions[0]?.hash;
     const consistent = executions.every((e) => e.hash === firstHash);
+    const hashSource = params.structuredFields && params.structuredFields.length > 0 ? 'structured' : 'raw';
 
     return {
       success: consistent,
       consistent,
       reason: consistent ? 'All runs consistent' : 'Output mismatch between runs',
       executions,
+      hashSource,
+      structuredFields: params.structuredFields,
     };
   }
 
@@ -621,13 +807,14 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
     // ========================================================================
 
     // guardianFlow - Interação com sistema de segurança
-    async guardianFlow({ action, intent, code, command, filePaths, reason }) {
+    async guardianFlow({ action, intent, code, command, filePaths, reason, structuredFields, structuredSource }) {
       if (!config.guardianFlowEnabled) {
-        // Guardian Flow desabilitado - retorna modo permissivo
+        // Guardian Flow desabilitado - BLOQUEAR execução (não aprovar silenciosamente)
         return JSON.stringify({
-          success: true,
-          warning: 'Guardian Flow desabilitado - operando em modo permissivo',
-          result: { approved: true, loaLevel: 1 },
+          success: false,
+          error: 'Guardian Flow está desabilitado. Ações que requerem segurança não podem ser executadas.',
+          code: 'GUARDIAN_FLOW_DISABLED',
+          hint: 'Ative guardianFlowEnabled na configuração para usar este recurso.',
         });
       }
 
@@ -704,7 +891,13 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
                   return `node -e "const c=Buffer.from('${b64}','base64').toString('utf8'); eval(c);"`;
                 })();
 
-            const deterministic = await runDeterministicRuns({ command: finalCommand, runs: 5, timeoutSec: 30 });
+            const deterministic = await runDeterministicRuns({
+              command: finalCommand,
+              runs: 5,
+              timeoutSec: 30,
+              structuredFields,
+              structuredSource,
+            });
             const runsCompleted = deterministic.executions?.length || 0;
 
             return JSON.stringify({
@@ -715,10 +908,14 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
               consistency: deterministic.consistent ? 100 : 0,
               runsCompleted,
               message: deterministic.reason,
+              hashSource: deterministic.hashSource,
+              structuredFieldsUsed: deterministic.structuredFields,
               executions: deterministic.executions?.map((e) => ({
                 exitCode: e.exitCode,
                 durationMs: e.durationMs,
                 hash: e.hash,
+                hashSource: e.hashSource,
+                structured: e.structured,
                 stdoutSample: (e.stdout || '').slice(0, 4000),
                 stderrSample: (e.stderr || '').slice(0, 4000),
               })),
@@ -751,19 +948,53 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
             if (!reason) {
               return JSON.stringify({ success: false, error: 'Reason é obrigatório para requestApproval' });
             }
+            
+            await ensureApprovalStore();
             const classification = intent ? classifyIntent(intent) : { loaLevel: 2 as LOALevel, intent: 'unknown' };
-            const approvalId = `approval_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+            
+            // Criar aprovação REAL no store persistente
+            const approval = await createApproval({
+              intent: intent || 'unknown',
+              loaLevel: classification.loaLevel,
+              reason,
+              requestedBy: config.userId,
+              expiresInMs: 5 * 60 * 1000, // 5 minutos
+            });
             
             return JSON.stringify({
               success: true,
               action: 'requestApproval',
               gate: 'human_approval',
-              approvalId,
+              approvalId: approval.id,
               loaLevel: classification.loaLevel,
-              status: 'pending',
+              status: approval.status,
+              expiresAt: approval.expiresAt.toISOString(),
               message: `Aprovação solicitada para LOA ${classification.loaLevel}: ${reason}`,
-              expiresIn: '5 minutos',
-              note: 'Aguarde aprovação do usuário via UI',
+              note: 'Use POST /api/approvals/{id}/approve ou /reject para decidir',
+            });
+          }
+
+          case 'validateApproval': {
+            const approvalId = (intent || '').trim();
+            if (!approvalId) {
+              return JSON.stringify({ success: false, error: 'approvalId é obrigatório (passe via intent)' });
+            }
+            
+            await ensureApprovalStore();
+            const validation = await validateApproval(approvalId);
+            
+            return JSON.stringify({
+              success: validation.valid,
+              action: 'validateApproval',
+              gate: 'human_approval',
+              approvalId,
+              valid: validation.valid,
+              reason: validation.reason,
+              approval: validation.approval ? {
+                status: validation.approval.status,
+                decidedBy: validation.approval.decidedBy,
+                decidedAt: validation.approval.decidedAt?.toISOString(),
+              } : undefined,
             });
           }
 
@@ -771,7 +1002,7 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
             return JSON.stringify({
               success: false,
               error: `Ação Guardian Flow desconhecida: ${action}`,
-              availableActions: ['classify', 'validateIntent', 'checkBlastRadius', 'runDeterministic', 'securityScan', 'requestApproval'],
+              availableActions: ['classify', 'validateIntent', 'checkBlastRadius', 'runDeterministic', 'securityScan', 'requestApproval', 'validateApproval'],
             });
         }
       } catch (error: unknown) {
@@ -805,23 +1036,45 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
 
         // Gate 2: Blast Radius (se LOA >= 2)
         if (effectiveLOA >= 2) {
-          const score = Math.min(affectedFiles.length * 10, 100);
-          const blastPassed = score <= loaConfig.maxBlastRadius;
+          // Cálculo REAL de blast radius baseado em dependências
+          const blastAnalysis = await calculateRealBlastRadius(affectedFiles);
+          const blastPassed = blastAnalysis.score <= loaConfig.maxBlastRadius;
+          
+          const detailsStr = blastAnalysis.details.riskFactors.length > 0
+            ? ` (${blastAnalysis.details.riskFactors.map(r => r.factor).join(', ')})`
+            : '';
+          
           gates.push({
             name: 'blast_radius',
             passed: blastPassed,
             message: blastPassed 
-              ? `Blast radius ${score}% dentro do limite`
-              : `Blast radius ${score}% excede limite de ${loaConfig.maxBlastRadius}%`,
+              ? `Blast radius ${blastAnalysis.score}% dentro do limite${detailsStr}`
+              : `Blast radius ${blastAnalysis.score}% excede limite de ${loaConfig.maxBlastRadius}%${detailsStr}`,
           });
         }
 
         // Gate 3: Security Scan (se configurado para o LOA)
         if (loaConfig.requiresSecurityScan) {
+          // Executar scan REAL via Semgrep
+          const scanResult = await runSemgrepScan(baseDir);
+          const criticalCount = scanResult.findings.filter(
+            (f: { severity?: string }) => (f.severity || '').toLowerCase() === 'critical'
+          ).length;
+          const highCount = scanResult.findings.filter(
+            (f: { severity?: string }) => (f.severity || '').toLowerCase() === 'high'
+          ).length;
+          
+          // Só passa se scan rodou com sucesso E não há findings críticos/altos
+          const scanPassed = scanResult.success && criticalCount === 0 && highCount === 0;
+          
           gates.push({
             name: 'security_scan',
-            passed: true,
-            message: 'Security scan aprovado - nenhuma vulnerabilidade crítica',
+            passed: scanPassed,
+            message: !scanResult.success
+              ? `Security scan falhou: ${scanResult.stderr || 'Docker/Semgrep indisponível'}`
+              : scanPassed
+                ? 'Security scan aprovado - nenhuma vulnerabilidade crítica/alta'
+                : `Security scan encontrou ${criticalCount} críticos e ${highCount} altos`,
           });
         }
 

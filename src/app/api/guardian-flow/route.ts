@@ -223,7 +223,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 200 });
     }
     
-    // 5. LOA 1: Executar automaticamente (dry run por padrão)
+    // 5. LOA 1: Execução automática com comando seguro opcional
+    let executionOutput = 'Dry run concluído. Nenhuma mudança aplicada.';
+    let executionSuccess = true;
+
+    if (options?.allowAutoRun && options.command) {
+      // Executa comando em sandbox readonly para evitar efeitos colaterais
+      const runResult = await runSandbox({
+        enabled: true,
+        repoPath,
+        command: options.command,
+        timeoutMs: TIMEOUTS.SANDBOX_EXECUTION,
+        failMode: 'fail',
+        isolationProfile: 'strict',
+        networkPolicy: 'none',
+        fsPolicy: 'readonly',
+        useDocker: true,
+      });
+
+      executionSuccess = runResult.success && runResult.exitCode === 0;
+      executionOutput = runResult.stdout || runResult.stderr || 'Sem saída';
+
+      events.push(
+        createEvent('sandbox_executed', {
+          command: options.command,
+          exitCode: runResult.exitCode,
+          durationMs: runResult.durationMs,
+          success: executionSuccess,
+        })
+      );
+    }
     
     // Simular execução de agentes
     for (const agent of classification.requiredAgents) {
@@ -237,7 +266,7 @@ export async function POST(request: NextRequest) {
     
     events.push(
       createEvent('flow_completed', { 
-        success: true, 
+        success: executionSuccess, 
         durationMs: Date.now() - startTime,
       })
     );
@@ -251,7 +280,9 @@ export async function POST(request: NextRequest) {
         intent,
         loaLevel: classification.loaLevel,
         durationMs: Date.now() - startTime,
-        dryRun: options?.dryRun ?? true,
+        dryRun: !(options?.allowAutoRun && options.command),
+        commandExecuted: options?.command,
+        executionSuccess,
       },
     }).catch(console.error);
     
@@ -260,10 +291,8 @@ export async function POST(request: NextRequest) {
       status: 'completed',
       events,
       result: {
-        success: true,
-        output: options?.dryRun
-          ? 'Dry run concluído. Nenhuma mudança aplicada.'
-          : 'Ação executada com sucesso.',
+        success: executionSuccess,
+        output: executionOutput,
         changes: [],
         rollbackId: `rollback_${flowId}`,
       },

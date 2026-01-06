@@ -80,6 +80,10 @@ export async function POST(req: Request) {
       timeoutMs: body.sandbox?.timeoutMs ?? (process.env.LEGACYGUARD_SANDBOX_TIMEOUT_MS ? Number(process.env.LEGACYGUARD_SANDBOX_TIMEOUT_MS) : undefined),
       failMode: body.sandbox?.failMode || process.env.LEGACYGUARD_SANDBOX_FAIL_MODE || 'fail',
       languageHint: body.sandbox?.languageHint,
+      runtime: body.sandbox?.runtime || process.env.LEGACYGUARD_SANDBOX_RUNTIME,
+      image: body.sandbox?.image || process.env.LEGACYGUARD_SANDBOX_IMAGE,
+      networkPolicy: body.sandbox?.networkPolicy,
+      fsPolicy: body.sandbox?.fsPolicy,
     };
 
     // Pre-run quota enforcement: reserve conservative token estimate

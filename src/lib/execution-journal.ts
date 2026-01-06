@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { logEvent } from './audit';
 
 export type ExecutionStep = {
   title: string;
@@ -51,6 +52,21 @@ export function buildExecutionPlan(params: {
     lines.push('## Notas');
     lines.push(params.notes);
   }
+
+  // Audit (best-effort, não bloquear)
+  void logEvent({
+    action: 'execution_plan.created',
+    severity: 'info',
+    message: `Plano criado para ${params.intent}`,
+    metadata: {
+      planId,
+      intent: params.intent,
+      objectives: params.objectives,
+      steps: params.steps?.length || 0,
+      safetyLevel: params.safetyLevel,
+      approver: params.approver,
+    },
+  }).catch(() => {});
   return { planId, markdown: lines.join('\n') };
 }
 
@@ -87,5 +103,22 @@ export async function indexConversation(params: {
   }
 
   await fs.writeFile(filePath, lines.join('\n'), 'utf8');
+
+  // Audit (best-effort)
+  try {
+    await logEvent({
+      action: 'execution_conversation.indexed',
+      severity: 'info',
+      message: `Transcript indexado para ${safePlanId}`,
+      metadata: {
+        planId: safePlanId,
+        filePath,
+        turns: params.conversation?.length || 0,
+        hasPlanMarkdown: !!params.planMarkdown,
+      },
+    });
+  } catch {
+    // Não bloquear se audit falhar
+  }
   return { filePath };
 }

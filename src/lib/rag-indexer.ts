@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import OpenAI from 'openai';
+import ts from 'typescript';
 import { extractSymbols } from './indexer';
 import crypto from 'crypto';
 
@@ -43,6 +44,26 @@ export interface CodeChunk {
   metadata: ChunkMetadata;
 }
 
+export interface GraphNode {
+  repoId: string;
+  path: string;
+  symbol: string;
+  kind: string;
+  startLine: number;
+  endLine: number;
+  metadata?: Record<string, any>;
+}
+
+export interface GraphEdge {
+  repoId: string;
+  fromPath: string;
+  fromSymbol?: string;
+  toPath: string;
+  toSymbol?: string;
+  kind: 'import' | 'call' | 'ref' | 'export';
+  metadata?: Record<string, any>;
+}
+
 export interface SearchResult {
   id: number;
   repoId: string;
@@ -81,6 +102,13 @@ export interface RAGIndexer {
   // Info
   getRepoStats: (repoId: string) => Promise<IndexedRepo | null>;
   listRepos: () => Promise<IndexedRepo[]>;
+
+  // Grafo
+  getGraphNeighbors?: (
+    repoId: string,
+    path: string,
+    options?: { limit?: number }
+  ) => Promise<{ symbols: GraphNode[]; imports: GraphEdge[]; dependents: GraphEdge[] }>;
   
   // Manutenção
   cleanupCache: (daysOld?: number) => Promise<number>;
@@ -100,6 +128,7 @@ export interface SearchOptions {
 
 let pool: Pool | null = null;
 let openai: OpenAI | null = null;
+const graphEnabled = ['true', '1', 'yes'].includes(`${process.env.RAG_GRAPH_ENABLED || ''}`.toLowerCase());
 
 function getPool(): Pool {
   if (!pool) {
@@ -114,6 +143,43 @@ function getPool(): Pool {
     });
   }
   return pool;
+}
+
+let graphSchemaReady = false;
+
+async function ensureGraphSchema(client: Pool | PoolClient) {
+  if (graphSchemaReady || !graphEnabled) return;
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS code_graph_nodes (
+      id SERIAL PRIMARY KEY,
+      repo_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      kind TEXT,
+      start_line INT,
+      end_line INT,
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (repo_id, path, symbol)
+    )
+  `);
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS code_graph_edges (
+      id SERIAL PRIMARY KEY,
+      repo_id TEXT NOT NULL,
+      from_path TEXT NOT NULL,
+      from_symbol TEXT,
+      to_path TEXT NOT NULL,
+      to_symbol TEXT,
+      kind TEXT,
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await client.query('CREATE INDEX IF NOT EXISTS idx_graph_nodes_repo ON code_graph_nodes(repo_id)');
+  await client.query('CREATE INDEX IF NOT EXISTS idx_graph_edges_repo ON code_graph_edges(repo_id)');
+  graphSchemaReady = true;
 }
 
 function getOpenAI(): OpenAI {
@@ -184,19 +250,264 @@ function detectLanguage(path: string): string {
   return langMap[ext] || 'unknown';
 }
 
-function chunkCode(content: string, path: string): Array<{
+type ChunkPiece = {
   content: string;
   startLine: number;
   endLine: number;
   chunkIndex: number;
-}> {
+  symbols?: string[];
+  metadata?: ChunkMetadata;
+};
+
+// ============================================================================
+// Python AST Chunking (regex-based, no external parser)
+// ============================================================================
+
+function chunkPythonByAst(content: string, filePath: string): ChunkPiece[] {
   const lines = content.split('\n');
-  const chunks: Array<{
-    content: string;
-    startLine: number;
-    endLine: number;
-    chunkIndex: number;
-  }> = [];
+  const chunks: ChunkPiece[] = [];
+  const fileImports: string[] = [];
+  let idx = 0;
+
+  // Regex patterns for Python constructs
+  const funcPattern = /^(\s*)def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/;
+  const classPattern = /^(\s*)class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[:\(]/;
+  const asyncFuncPattern = /^(\s*)async\s+def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/;
+  const importPattern = /^(?:from\s+(\S+)\s+)?import\s+(.+)/;
+
+  let currentBlock: { startLine: number; indent: number; symbol: string; kind: string; lines: string[] } | null = null;
+
+  function flushBlock() {
+    if (currentBlock && currentBlock.lines.length > 0) {
+      chunks.push({
+        content: currentBlock.lines.join('\n').trim(),
+        startLine: currentBlock.startLine,
+        endLine: currentBlock.startLine + currentBlock.lines.length - 1,
+        chunkIndex: idx++,
+        symbols: [currentBlock.symbol],
+        metadata: {
+          functions: currentBlock.kind === 'function' ? [currentBlock.symbol] : [],
+          classes: currentBlock.kind === 'class' ? [currentBlock.symbol] : [],
+          imports: fileImports,
+        },
+      });
+    }
+    currentBlock = null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNum = i + 1;
+
+    // Extract imports
+    const importMatch = line.match(importPattern);
+    if (importMatch) {
+      const module = importMatch[1] || importMatch[2].split(',')[0].trim().split(' ')[0];
+      if (module && !module.startsWith('(')) fileImports.push(module);
+    }
+
+    // Check for new function/class definition
+    const funcMatch = line.match(funcPattern) || line.match(asyncFuncPattern);
+    const classMatch = line.match(classPattern);
+
+    if (funcMatch || classMatch) {
+      flushBlock();
+      const match = funcMatch || classMatch;
+      const indent = (match![1] || '').length;
+      const symbol = match![2];
+      const kind = classMatch ? 'class' : 'function';
+      currentBlock = { startLine: lineNum, indent, symbol, kind, lines: [line] };
+    } else if (currentBlock) {
+      // Continue current block if indentation is greater or line is empty/comment
+      const lineIndent = line.match(/^(\s*)/)?.[1].length || 0;
+      const isEmptyOrComment = /^\s*(#.*)?$/.test(line);
+      
+      if (isEmptyOrComment || lineIndent > currentBlock.indent || (lineIndent === currentBlock.indent && line.trim() === '')) {
+        currentBlock.lines.push(line);
+      } else {
+        flushBlock();
+      }
+    }
+  }
+
+  flushBlock();
+  return chunks;
+}
+
+// ============================================================================
+// Go AST Chunking (regex-based, no external parser)
+// ============================================================================
+
+function chunkGoByAst(content: string, filePath: string): ChunkPiece[] {
+  const lines = content.split('\n');
+  const chunks: ChunkPiece[] = [];
+  const fileImports: string[] = [];
+  let idx = 0;
+
+  // Regex patterns for Go constructs
+  const funcPattern = /^func\s+(?:\([^)]+\)\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/;
+  const methodPattern = /^func\s+\(([^)]+)\)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/;
+  const typePattern = /^type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:struct|interface)\s*\{/;
+  const importPattern = /^\s*"([^"]+)"/;
+  const importBlockStart = /^import\s*\(/;
+  const importBlockEnd = /^\s*\)/;
+
+  let currentBlock: { startLine: number; symbol: string; kind: string; lines: string[]; braceCount: number } | null = null;
+  let inImportBlock = false;
+
+  function flushBlock() {
+    if (currentBlock && currentBlock.lines.length > 0) {
+      chunks.push({
+        content: currentBlock.lines.join('\n').trim(),
+        startLine: currentBlock.startLine,
+        endLine: currentBlock.startLine + currentBlock.lines.length - 1,
+        chunkIndex: idx++,
+        symbols: [currentBlock.symbol],
+        metadata: {
+          functions: currentBlock.kind === 'function' ? [currentBlock.symbol] : [],
+          classes: currentBlock.kind === 'type' ? [currentBlock.symbol] : [],
+          imports: fileImports,
+        },
+      });
+    }
+    currentBlock = null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNum = i + 1;
+
+    // Handle import blocks
+    if (importBlockStart.test(line)) {
+      inImportBlock = true;
+      continue;
+    }
+    if (inImportBlock) {
+      if (importBlockEnd.test(line)) {
+        inImportBlock = false;
+      } else {
+        const importMatch = line.match(importPattern);
+        if (importMatch) fileImports.push(importMatch[1]);
+      }
+      continue;
+    }
+
+    // Single-line import
+    if (line.match(/^import\s+"([^"]+)"/)) {
+      const match = line.match(/^import\s+"([^"]+)"/);
+      if (match) fileImports.push(match[1]);
+      continue;
+    }
+
+    // Check for new function/type definition
+    const funcMatch = line.match(funcPattern);
+    const methodMatch = line.match(methodPattern);
+    const typeMatch = line.match(typePattern);
+
+    if (funcMatch || methodMatch || typeMatch) {
+      flushBlock();
+      const symbol = funcMatch?.[1] || methodMatch?.[2] || typeMatch?.[1] || 'unknown';
+      const kind = typeMatch ? 'type' : 'function';
+      const braceCount = (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
+      currentBlock = { startLine: lineNum, symbol, kind, lines: [line], braceCount };
+    } else if (currentBlock) {
+      currentBlock.lines.push(line);
+      currentBlock.braceCount += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
+      
+      // Block ends when braces balance
+      if (currentBlock.braceCount <= 0) {
+        flushBlock();
+      }
+    }
+  }
+
+  flushBlock();
+  return chunks;
+}
+
+function scriptKindFromPath(path: string): ts.ScriptKind {
+  const ext = path.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'ts':
+      return ts.ScriptKind.TS;
+    case 'tsx':
+      return ts.ScriptKind.TSX;
+    case 'js':
+      return ts.ScriptKind.JS;
+    case 'jsx':
+      return ts.ScriptKind.JSX;
+    default:
+      return ts.ScriptKind.Unknown;
+  }
+}
+
+function chunkByAst(content: string, path: string): ChunkPiece[] {
+  try {
+    const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKindFromPath(path));
+    const chunks: ChunkPiece[] = [];
+    const fileImports: string[] = [];
+    const fileExports: string[] = [];
+    let idx = 0;
+
+    function pushNode(node: ts.Node, symbol: string, kind: string) {
+      const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
+      const nodeText = content.slice(node.getStart(), node.getEnd());
+      chunks.push({
+        content: nodeText.trim(),
+        startLine: start.line + 1,
+        endLine: end.line + 1,
+        chunkIndex: idx++,
+        symbols: [symbol],
+        metadata: { functions: kind === 'function' ? [symbol] : [], classes: kind === 'class' ? [symbol] : [] },
+      });
+    }
+
+    const visit = (node: ts.Node) => {
+      if (ts.isImportDeclaration(node)) {
+        const moduleName = (node.moduleSpecifier as ts.StringLiteral).text;
+        fileImports.push(moduleName);
+      }
+
+      if (ts.isExportDeclaration(node)) {
+        const moduleName = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)
+          ? node.moduleSpecifier.text
+          : undefined;
+        if (moduleName) fileExports.push(moduleName);
+      }
+
+      if (ts.isFunctionDeclaration(node) && node.name?.text) {
+        pushNode(node, node.name.text, 'function');
+      } else if (ts.isClassDeclaration(node) && node.name?.text) {
+        pushNode(node, node.name.text, 'class');
+      } else if (ts.isVariableStatement(node)) {
+        node.declarationList.declarations.forEach((decl) => {
+          if (ts.isIdentifier(decl.name) && decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
+            pushNode(decl, decl.name.text, 'function');
+          }
+        });
+      }
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+    return chunks.map((c) => ({
+      ...c,
+      metadata: {
+        ...(c.metadata || {}),
+        imports: fileImports,
+        exports: fileExports,
+      },
+    }));
+  } catch (err) {
+    console.warn('[rag-indexer] AST chunking failed, falling back:', (err as Error).message);
+    return [];
+  }
+}
+
+function chunkByLines(content: string, path: string): ChunkPiece[] {
+  const lines = content.split('\n');
+  const chunks: ChunkPiece[] = [];
   
   // Estimativa: ~4 chars por token
   const charsPerChunk = CHUNK_SIZE * 4;
@@ -233,6 +544,29 @@ function chunkCode(content: string, path: string): Array<{
   return chunks;
 }
 
+function smartChunk(content: string, filePath: string): ChunkPiece[] {
+  const lang = detectLanguage(filePath);
+  
+  // Try language-specific AST chunking first
+  let astChunks: ChunkPiece[] = [];
+  
+  if (lang === 'typescript' || lang === 'javascript') {
+    astChunks = chunkByAst(content, filePath);
+  } else if (lang === 'python') {
+    astChunks = chunkPythonByAst(content, filePath);
+  } else if (lang === 'go') {
+    astChunks = chunkGoByAst(content, filePath);
+  }
+  
+  // Fall back to line-based chunking if AST parsing yields nothing
+  if (astChunks.length > 0) {
+    console.log(`[rag-indexer] AST chunking for ${lang}: ${astChunks.length} chunks from ${filePath}`);
+    return astChunks;
+  }
+  
+  return chunkByLines(content, filePath);
+}
+
 // ============================================================================
 // RAG Indexer implementation
 // ============================================================================
@@ -242,18 +576,20 @@ export function createRAGIndexer(): RAGIndexer {
     async indexFile(repoId: string, file: CodeFile): Promise<number> {
       const client = getPool();
       const language = detectLanguage(file.path);
-      const chunks = chunkCode(file.content, file.path);
+      const chunks = smartChunk(file.content, file.path);
       
       let indexed = 0;
       
       for (const chunk of chunks) {
-        const symbols = extractSymbols(chunk.content).slice(0, 50);
+        const symbols = (chunk.symbols || extractSymbols(chunk.content)).slice(0, 50);
         const embedding = await embed(chunk.content);
         const vec = toVectorLiteral(embedding);
         
         const metadata: ChunkMetadata = {
-          functions: symbols.filter(s => !s.includes('.')),
-          classes: symbols.filter(s => s[0] === s[0].toUpperCase()),
+          functions: chunk.metadata?.functions || symbols.filter(s => !s.includes('.')),
+          classes: chunk.metadata?.classes || symbols.filter(s => s[0] === s[0].toUpperCase()),
+          imports: chunk.metadata?.imports,
+          exports: chunk.metadata?.exports,
         };
         
         await client.query(`
@@ -281,6 +617,15 @@ export function createRAGIndexer(): RAGIndexer {
         
         indexed++;
       }
+
+      if (graphEnabled) {
+        try {
+          const astGraph = buildGraphFromAst(file.path, file.content, repoId);
+          await persistGraph(repoId, file.path, astGraph.nodes, astGraph.edges);
+        } catch (err: any) {
+          console.warn('[rag-indexer] Failed to persist graph:', err?.message || err);
+        }
+      }
       
       return indexed;
     },
@@ -298,6 +643,11 @@ export function createRAGIndexer(): RAGIndexer {
       try {
         // Remove chunks antigos
         await client.query('DELETE FROM code_chunks WHERE repo_id = $1', [repoId]);
+        if (graphEnabled) {
+          await ensureGraphSchema(client);
+          await client.query('DELETE FROM code_graph_nodes WHERE repo_id = $1', [repoId]);
+          await client.query('DELETE FROM code_graph_edges WHERE repo_id = $1', [repoId]);
+        }
         
         let totalChunks = 0;
         const languages: Record<string, number> = {};
@@ -487,6 +837,60 @@ export function createRAGIndexer(): RAGIndexer {
         return 0;
       }
     },
+
+    async getGraphNeighbors(repoId: string, path: string, options?: { limit?: number }) {
+      if (!graphEnabled) {
+        return { symbols: [], imports: [], dependents: [] };
+      }
+      const client = getPool();
+      await ensureGraphSchema(client);
+      const limit = options?.limit || 5;
+
+      const { rows: symbolRows } = await client.query(
+        'SELECT symbol, kind, start_line, end_line, metadata FROM code_graph_nodes WHERE repo_id = $1 AND path = $2 LIMIT $3',
+        [repoId, path, limit]
+      );
+
+      const { rows: importRows } = await client.query(
+        'SELECT from_path, from_symbol, to_path, to_symbol, kind, metadata FROM code_graph_edges WHERE repo_id = $1 AND from_path = $2 LIMIT $3',
+        [repoId, path, limit]
+      );
+
+      const { rows: dependentRows } = await client.query(
+        'SELECT from_path, from_symbol, to_path, to_symbol, kind, metadata FROM code_graph_edges WHERE repo_id = $1 AND to_path = $2 LIMIT $3',
+        [repoId, path, limit]
+      );
+
+      return {
+        symbols: symbolRows.map((r: any) => ({
+          repoId,
+          path,
+          symbol: r.symbol,
+          kind: r.kind,
+          startLine: r.start_line,
+          endLine: r.end_line,
+          metadata: r.metadata || {},
+        })),
+        imports: importRows.map((r: any) => ({
+          repoId,
+          fromPath: r.from_path,
+          fromSymbol: r.from_symbol,
+          toPath: r.to_path,
+          toSymbol: r.to_symbol,
+          kind: r.kind,
+          metadata: r.metadata || {},
+        })),
+        dependents: dependentRows.map((r: any) => ({
+          repoId,
+          fromPath: r.from_path,
+          fromSymbol: r.from_symbol,
+          toPath: r.to_path,
+          toSymbol: r.to_symbol,
+          kind: r.kind,
+          metadata: r.metadata || {},
+        })),
+      };
+    },
   };
 }
 
@@ -505,3 +909,110 @@ export function getRAGIndexer(): RAGIndexer {
 
 // Re-export for compatibility
 export { createRAGIndexer as createPgVectorIndexer };
+
+// ============================================================================
+// Graph helpers (AST)
+// ============================================================================
+
+function buildGraphFromAst(path: string, content: string, repoId: string): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+
+  try {
+    const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true, scriptKindFromPath(path));
+
+    const addNode = (symbol: string, kind: string, node: ts.Node) => {
+      const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
+      nodes.push({
+        repoId,
+        path,
+        symbol,
+        kind,
+        startLine: start.line + 1,
+        endLine: end.line + 1,
+        metadata: {},
+      });
+    };
+
+    const visit = (node: ts.Node) => {
+      if (ts.isImportDeclaration(node)) {
+        const moduleName = (node.moduleSpecifier as ts.StringLiteral).text;
+        edges.push({ repoId, fromPath: path, toPath: moduleName, kind: 'import' });
+      }
+
+      if (ts.isFunctionDeclaration(node) && node.name?.text) {
+        addNode(node.name.text, 'function', node);
+      }
+
+      if (ts.isClassDeclaration(node) && node.name?.text) {
+        addNode(node.name.text, 'class', node);
+      }
+
+      if (ts.isVariableStatement(node)) {
+        node.declarationList.declarations.forEach((decl) => {
+          if (ts.isIdentifier(decl.name) && decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
+            addNode(decl.name.text, 'function', decl);
+          }
+        });
+      }
+
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+  } catch (err) {
+    console.warn('[rag-indexer] buildGraphFromAst failed:', (err as Error).message);
+  }
+
+  return { nodes, edges };
+}
+
+async function persistGraph(repoId: string, path: string, nodes: GraphNode[], edges: GraphEdge[]) {
+  if (!graphEnabled) return;
+  const client = getPool();
+  await ensureGraphSchema(client);
+
+  await client.query('DELETE FROM code_graph_nodes WHERE repo_id = $1 AND path = $2', [repoId, path]);
+  await client.query('DELETE FROM code_graph_edges WHERE repo_id = $1 AND from_path = $2', [repoId, path]);
+
+  if (nodes.length > 0) {
+    const params: any[] = [];
+    const placeholders = nodes
+      .map((n, i) => {
+        const offset = i * 7;
+        params.push(n.repoId, n.path, n.symbol, n.kind, n.startLine, n.endLine, n.metadata || {});
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`;
+      })
+      .join(',');
+
+    await client.query(
+      `INSERT INTO code_graph_nodes (repo_id, path, symbol, kind, start_line, end_line, metadata)
+       VALUES ${placeholders}
+       ON CONFLICT (repo_id, path, symbol) DO UPDATE SET
+         kind = EXCLUDED.kind,
+         start_line = EXCLUDED.start_line,
+         end_line = EXCLUDED.end_line,
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()`,
+      params
+    );
+  }
+
+  if (edges.length > 0) {
+    const params: any[] = [];
+    const placeholders = edges
+      .map((e, i) => {
+        const offset = i * 7;
+        params.push(e.repoId, e.fromPath, e.fromSymbol || null, e.toPath, e.toSymbol || null, e.kind, e.metadata || {});
+        return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`;
+      })
+      .join(',');
+
+    await client.query(
+      `INSERT INTO code_graph_edges (repo_id, from_path, from_symbol, to_path, to_symbol, kind, metadata)
+       VALUES ${placeholders}`,
+      params
+    );
+  }
+}

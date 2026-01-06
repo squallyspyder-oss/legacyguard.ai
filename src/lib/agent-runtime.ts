@@ -319,7 +319,7 @@ export const AGENT_TOOLS: ChatCompletionTool[] = [
         properties: {
           action: { 
             type: 'string', 
-            enum: ['classify', 'validateIntent', 'checkBlastRadius', 'runDeterministic', 'securityScan', 'requestApproval'],
+            enum: ['classify', 'validateIntent', 'checkBlastRadius', 'runDeterministic', 'securityScan', 'requestApproval', 'validateApproval'],
             description: 'Ação do Guardian Flow a executar'
           },
           intent: { type: 'string', description: 'Intenção do usuário (para classify/validateIntent)' },
@@ -636,12 +636,14 @@ export interface ToolExecutor {
   
   // Guardian Flow Tools
   guardianFlow: (params: { 
-    action: 'classify' | 'validateIntent' | 'checkBlastRadius' | 'runDeterministic' | 'securityScan' | 'requestApproval';
+    action: 'classify' | 'validateIntent' | 'checkBlastRadius' | 'runDeterministic' | 'securityScan' | 'requestApproval' | 'validateApproval';
     intent?: string;
     code?: string;
     command?: string;
     filePaths?: string[];
     reason?: string;
+    structuredFields?: string[];
+    structuredSource?: 'stdout' | 'stderr';
   }) => Promise<string>;
   checkSafetyGates: (params: { 
     intent: string; 

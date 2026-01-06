@@ -12,6 +12,7 @@ import { emitSandboxLog } from '../lib/sandbox-logs';
 import { startIncidentCycle, markMitigation, recordRegression } from '../lib/metrics';
 import { logEvent } from '../lib/audit';
 import { runSandbox, SandboxResult, getSandboxCapabilities, SandboxConfig, HarnessCommands } from '../lib/sandbox';
+import { classifyIntent, LOA_CONFIGS, type LOALevel } from '../guardian-flow';
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'awaiting-approval';
 
@@ -525,9 +526,20 @@ export class Orchestrator {
     this.taskContext = { ...this.taskContext, ...context };
   }
 
-  private async runSandboxIfEnabled(task: SubTask): Promise<SandboxResult | null> {
+  private async runSandboxIfEnabled(task: SubTask, loaLevel?: LOALevel): Promise<SandboxResult | null> {
     const sandbox = this.taskContext.sandbox as SandboxConfig | undefined;
     const riskLevel = this.state?.plan.riskLevel || 'medium';
+
+    // Determine effective LOA from context or classify based on task description
+    let effectiveLOA = loaLevel;
+    if (!effectiveLOA && task.description) {
+      try {
+        const classification = classifyIntent(task.description);
+        effectiveLOA = classification.loaLevel;
+      } catch {
+        effectiveLOA = 2; // default to LOA 2 if classification fails
+      }
+    }
     
     // MANIFESTO Regra 6: Sandbox obrigatório para agentes que executam código
     // Executor e Operator podem executar comandos - SEMPRE precisam de sandbox
@@ -633,6 +645,15 @@ export class Orchestrator {
 
     this.log(`🔒 Sandbox: executando ${harness ? 'harness Twin' : 'comando autodetect'} antes de [${task.agent}]`);
 
+    // LOA >= 2 requires snapshotOnFail for rollback capability
+    // LOA 1 = read-only, LOA 2+ = potentially mutating
+    const requiresSnapshot = (effectiveLOA && effectiveLOA >= 2) || sandbox.fsPolicy === 'readwrite';
+    const snapshotOnFail = sandbox.snapshotOnFail ?? requiresSnapshot;
+
+    if (snapshotOnFail) {
+      this.log(`🔒 Sandbox: snapshotOnFail=true (LOA=${effectiveLOA || 'unknown'}, fsPolicy=${sandbox.fsPolicy || 'default'})`);
+    }
+
     const result = await runSandbox({
       enabled: true,
       repoPath,
@@ -650,6 +671,9 @@ export class Orchestrator {
       tmpfsSizeMb: sandbox.tmpfsSizeMb,
       useDocker: sandbox.useDocker,
       runnerPath: sandbox.runnerPath,
+      runtime: sandbox.runtime,
+      image: sandbox.image,
+      snapshotOnFail,
       onLog: (m) => this.log(m),
     });
 
