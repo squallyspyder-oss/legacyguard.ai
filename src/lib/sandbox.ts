@@ -678,35 +678,70 @@ export function validateHarnessCommands(commands: string[]): {
   valid: boolean;
   warnings: string[];
   blocked: string[];
+  category?: string;
 } {
   const warnings: string[] = [];
   const blocked: string[] = [];
   
-  const dangerousPatterns = [
-    /rm\s+-rf\s+\/(?!tmp)/i,  // rm -rf outside /tmp
-    /curl\s+.*\|\s*(?:bash|sh)/i,  // curl | bash
-    /wget\s+.*\|\s*(?:bash|sh)/i,  // wget | bash
-    />\s*\/etc\//i,  // writing to /etc
-    /chmod\s+777/i,  // world-writable
-    /mkfs/i,  // filesystem commands
-    /dd\s+if=/i,  // dd commands
+  // C.3 Enhanced dangerous patterns for escape detection
+  const dangerousPatterns: Array<{ pattern: RegExp; category: string }> = [
+    // Filesystem destruction
+    { pattern: /rm\s+-rf\s+\/(?!tmp)/i, category: 'filesystem_escape' },
+    { pattern: />\s*\/etc\//i, category: 'filesystem_escape' },
+    { pattern: /mkfs/i, category: 'filesystem_escape' },
+    { pattern: /dd\s+if=/i, category: 'filesystem_escape' },
+    
+    // Remote code execution
+    { pattern: /curl\s+.*\|\s*(?:bash|sh|python|perl|ruby)/i, category: 'command_injection' },
+    { pattern: /wget\s+.*\|\s*(?:bash|sh|python|perl|ruby)/i, category: 'command_injection' },
+    { pattern: /base64\s+-d\s*\|\s*(?:bash|sh)/i, category: 'command_injection' },
+    { pattern: /xxd\s+-r.*\|\s*(?:bash|sh)/i, category: 'command_injection' },
+    { pattern: /eval\s+\$\{?[A-Za-z_]/i, category: 'command_injection' },
+    
+    // Privilege escalation
+    { pattern: /chmod\s+[47]77/i, category: 'privilege_escalation' },
+    { pattern: /chown\s+root/i, category: 'privilege_escalation' },
+    { pattern: /setuid/i, category: 'privilege_escalation' },
+    
+    // Container breakout
+    { pattern: /nsenter/i, category: 'container_breakout' },
+    { pattern: /docker\s+run\s+.*--privileged/i, category: 'container_breakout' },
+    { pattern: /mount\s+.*\/dev\//i, category: 'container_breakout' },
+    
+    // Network exfiltration (reverse shells)
+    { pattern: /\/dev\/tcp\//i, category: 'network_exfiltration' },
+    { pattern: /nc\s+(-e|-c)/i, category: 'network_exfiltration' },
+    { pattern: /ncat\s+(-e|-c)/i, category: 'network_exfiltration' },
+    
+    // Cron/systemd persistence
+    { pattern: /crontab\s+(-e|-r|.*\|)/i, category: 'persistence' },
+    { pattern: /systemctl\s+(enable|start|restart)\s+/i, category: 'persistence' },
   ];
 
-  const warningPatterns = [
-    /sudo/i,  // sudo usage
-    /su\s+-/i,  // su usage
-    /npm\s+install\s+--unsafe/i,  // unsafe npm
+  const warningPatterns: Array<{ pattern: RegExp; category: string }> = [
+    { pattern: /sudo/i, category: 'privilege_escalation' },
+    { pattern: /su\s+-/i, category: 'privilege_escalation' },
+    { pattern: /npm\s+install\s+--unsafe/i, category: 'package_install' },
+    { pattern: /npm\s+install\s+-g\s+/i, category: 'package_install' },
+    { pattern: /pip\s+install(?!\s+-r|\s+--requirement)/i, category: 'package_install' },
+    { pattern: /apt(-get)?\s+(install|upgrade)/i, category: 'package_install' },
+    { pattern: /gem\s+install/i, category: 'package_install' },
+    { pattern: /cargo\s+install/i, category: 'package_install' },
   ];
+
+  let lastCategory: string | undefined;
 
   for (const cmd of commands) {
-    for (const pattern of dangerousPatterns) {
+    for (const { pattern, category } of dangerousPatterns) {
       if (pattern.test(cmd)) {
-        blocked.push(`Blocked dangerous command: ${cmd.slice(0, 50)}...`);
+        blocked.push(`Blocked dangerous command (${category}): ${cmd.slice(0, 50)}...`);
+        lastCategory = category;
       }
     }
-    for (const pattern of warningPatterns) {
+    for (const { pattern, category } of warningPatterns) {
       if (pattern.test(cmd)) {
-        warnings.push(`Warning in command: ${cmd.slice(0, 50)}...`);
+        warnings.push(`Warning (${category}): ${cmd.slice(0, 50)}...`);
+        if (!lastCategory) lastCategory = category;
       }
     }
   }
@@ -715,5 +750,6 @@ export function validateHarnessCommands(commands: string[]): {
     valid: blocked.length === 0,
     warnings,
     blocked,
+    category: lastCategory,
   };
 }

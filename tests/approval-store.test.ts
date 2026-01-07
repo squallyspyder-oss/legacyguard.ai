@@ -49,13 +49,11 @@ describe('Approval Store', () => {
     });
 
     it('define expiração padrão de 5 minutos', async () => {
-      const before = Date.now();
       const approval = await createApproval({
         intent: 'test',
         loaLevel: 2,
         reason: 'test',
       });
-      const after = Date.now();
 
       const expirationMs = approval.expiresAt.getTime() - approval.requestedAt.getTime();
       expect(expirationMs).toBe(5 * 60 * 1000);

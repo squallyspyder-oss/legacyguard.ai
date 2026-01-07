@@ -1,0 +1,118 @@
+{
+  "version": "1.0.0",
+  "description": "Conjunto de queries para benchmark de precisão RAG",
+  "created": "2026-01-07",
+  "queries": [
+    {
+      "id": "auth-middleware",
+      "query": "middleware de autenticação com JWT",
+      "expectedFiles": ["src/lib/auth.ts", "src/app/api/auth/[...nextauth]/route.ts"],
+      "expectedSymbols": ["authOptions", "verifyToken", "getSession"],
+      "category": "auth"
+    },
+    {
+      "id": "sandbox-execution",
+      "query": "executar comando em sandbox isolado com Docker",
+      "expectedFiles": ["src/lib/sandbox.ts", "src/lib/execution-pipeline.ts"],
+      "expectedSymbols": ["runSandbox", "runWithSnapshot", "createSnapshot"],
+      "category": "sandbox"
+    },
+    {
+      "id": "guardian-flow-loa",
+      "query": "classificar intenção e nível de autonomia LOA",
+      "expectedFiles": ["src/guardian-flow/types.ts", "src/lib/intent-detector.ts"],
+      "expectedSymbols": ["classifyIntent", "LOALevel", "IntentClassification"],
+      "category": "guardian"
+    },
+    {
+      "id": "rag-search",
+      "query": "busca semântica com embeddings e pgvector",
+      "expectedFiles": ["src/lib/rag-indexer.ts", "src/lib/indexer-pgvector.ts"],
+      "expectedSymbols": ["search", "embed", "createRAGIndexer"],
+      "category": "rag"
+    },
+    {
+      "id": "approval-workflow",
+      "query": "sistema de aprovação humana para ações críticas",
+      "expectedFiles": ["src/lib/approval-store.ts", "src/app/api/approvals/route.ts"],
+      "expectedSymbols": ["createApproval", "validateApproval", "getApproval"],
+      "category": "approval"
+    },
+    {
+      "id": "audit-logging",
+      "query": "registrar eventos de auditoria com severidade",
+      "expectedFiles": ["src/lib/audit.ts"],
+      "expectedSymbols": ["logEvent", "AuditSeverity", "AuditEvent"],
+      "category": "audit"
+    },
+    {
+      "id": "agent-orchestrator",
+      "query": "orquestrador que coordena agentes e tarefas",
+      "expectedFiles": ["src/agents/orchestrator.ts"],
+      "expectedSymbols": ["runOrchestrator", "AgentTask", "orchestrate"],
+      "category": "agents"
+    },
+    {
+      "id": "reranker-boost",
+      "query": "reranking de resultados com boost de grafo",
+      "expectedFiles": ["src/lib/reranker.ts"],
+      "expectedSymbols": ["rerank", "applyGraphBoost", "RerankedResult"],
+      "category": "rag"
+    },
+    {
+      "id": "rbac-permissions",
+      "query": "controle de acesso baseado em roles e permissões",
+      "expectedFiles": ["src/lib/rbac.ts"],
+      "expectedSymbols": ["checkPermission", "hasRole", "RBACPolicy"],
+      "category": "security"
+    },
+    {
+      "id": "rate-limiting",
+      "query": "limitar requisições por usuário ou IP",
+      "expectedFiles": ["src/lib/rate-limit.ts"],
+      "expectedSymbols": ["rateLimit", "checkRateLimit", "RateLimitConfig"],
+      "category": "security"
+    },
+    {
+      "id": "playbook-dsl",
+      "query": "DSL para definir playbooks de automação",
+      "expectedFiles": ["src/lib/playbook-dsl.ts"],
+      "expectedSymbols": ["parsePlaybook", "executePlaybook", "PlaybookStep"],
+      "category": "playbook"
+    },
+    {
+      "id": "metrics-collection",
+      "query": "coletar métricas de performance e latência",
+      "expectedFiles": ["src/lib/metrics.ts"],
+      "expectedSymbols": ["recordMetric", "getMetrics", "MetricType"],
+      "category": "observability"
+    },
+    {
+      "id": "chat-streaming",
+      "query": "streaming de respostas do chat com SSE",
+      "expectedFiles": ["src/app/api/chat/route.ts", "src/agents/chat.ts"],
+      "expectedSymbols": ["streamChat", "createChatCompletion"],
+      "category": "chat"
+    },
+    {
+      "id": "graph-neighbors",
+      "query": "buscar vizinhos no grafo de dependências",
+      "expectedFiles": ["src/lib/rag-indexer.ts"],
+      "expectedSymbols": ["getGraphNeighbors", "GraphNode", "GraphEdge"],
+      "category": "rag"
+    },
+    {
+      "id": "blast-radius",
+      "query": "calcular impacto de mudanças em arquivos",
+      "expectedFiles": ["src/lib/impact.ts"],
+      "expectedSymbols": ["calculateBlastRadius", "getAffectedFiles"],
+      "category": "guardian"
+    }
+  ],
+  "metrics": {
+    "MRR@3": "Mean Reciprocal Rank nos top 3 resultados",
+    "Hit@1": "Proporção de queries onde o arquivo esperado está no top 1",
+    "Hit@3": "Proporção de queries onde o arquivo esperado está nos top 3",
+    "SymbolRecall@3": "Proporção de símbolos esperados encontrados nos top 3"
+  }
+}

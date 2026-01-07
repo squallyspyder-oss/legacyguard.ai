@@ -51,7 +51,7 @@ export interface GraphNode {
   kind: string;
   startLine: number;
   endLine: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface GraphEdge {
@@ -61,7 +61,7 @@ export interface GraphEdge {
   toPath: string;
   toSymbol?: string;
   kind: 'import' | 'call' | 'ref' | 'export';
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SearchResult {
@@ -221,7 +221,7 @@ function hashQuery(query: string): string {
 const CHUNK_SIZE = 1500; // tokens aproximado
 const CHUNK_OVERLAP = 200;
 
-function detectLanguage(path: string): string {
+export function detectLanguage(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() || '';
   const langMap: Record<string, string> = {
     ts: 'typescript',
@@ -263,7 +263,7 @@ type ChunkPiece = {
 // Python AST Chunking (regex-based, no external parser)
 // ============================================================================
 
-function chunkPythonByAst(content: string, filePath: string): ChunkPiece[] {
+function chunkPythonByAst(content: string): ChunkPiece[] {
   const lines = content.split('\n');
   const chunks: ChunkPiece[] = [];
   const fileImports: string[] = [];
@@ -302,8 +302,8 @@ function chunkPythonByAst(content: string, filePath: string): ChunkPiece[] {
     // Extract imports
     const importMatch = line.match(importPattern);
     if (importMatch) {
-      const module = importMatch[1] || importMatch[2].split(',')[0].trim().split(' ')[0];
-      if (module && !module.startsWith('(')) fileImports.push(module);
+      const moduleName = importMatch[1] || importMatch[2].split(',')[0].trim().split(' ')[0];
+      if (moduleName && !moduleName.startsWith('(')) fileImports.push(moduleName);
     }
 
     // Check for new function/class definition
@@ -338,7 +338,7 @@ function chunkPythonByAst(content: string, filePath: string): ChunkPiece[] {
 // Go AST Chunking (regex-based, no external parser)
 // ============================================================================
 
-function chunkGoByAst(content: string, filePath: string): ChunkPiece[] {
+function chunkGoByAst(content: string): ChunkPiece[] {
   const lines = content.split('\n');
   const chunks: ChunkPiece[] = [];
   const fileImports: string[] = [];
@@ -505,7 +505,7 @@ function chunkByAst(content: string, path: string): ChunkPiece[] {
   }
 }
 
-function chunkByLines(content: string, path: string): ChunkPiece[] {
+function chunkByLines(content: string): ChunkPiece[] {
   const lines = content.split('\n');
   const chunks: ChunkPiece[] = [];
   
@@ -553,9 +553,9 @@ function smartChunk(content: string, filePath: string): ChunkPiece[] {
   if (lang === 'typescript' || lang === 'javascript') {
     astChunks = chunkByAst(content, filePath);
   } else if (lang === 'python') {
-    astChunks = chunkPythonByAst(content, filePath);
+    astChunks = chunkPythonByAst(content);
   } else if (lang === 'go') {
-    astChunks = chunkGoByAst(content, filePath);
+    astChunks = chunkGoByAst(content);
   }
   
   // Fall back to line-based chunking if AST parsing yields nothing
@@ -564,7 +564,7 @@ function smartChunk(content: string, filePath: string): ChunkPiece[] {
     return astChunks;
   }
   
-  return chunkByLines(content, filePath);
+  return chunkByLines(content);
 }
 
 // ============================================================================
@@ -622,8 +622,8 @@ export function createRAGIndexer(): RAGIndexer {
         try {
           const astGraph = buildGraphFromAst(file.path, file.content, repoId);
           await persistGraph(repoId, file.path, astGraph.nodes, astGraph.edges);
-        } catch (err: any) {
-          console.warn('[rag-indexer] Failed to persist graph:', err?.message || err);
+        } catch (err) {
+          console.warn('[rag-indexer] Failed to persist graph:', (err as Error)?.message || err);
         }
       }
       
@@ -696,9 +696,9 @@ export function createRAGIndexer(): RAGIndexer {
       await client.query('DELETE FROM code_chunks WHERE repo_id = $1', [repoId]);
       try {
         await client.query('DELETE FROM doc_chunks WHERE repo_id = $1', [repoId]);
-      } catch (err: any) {
+      } catch (err) {
         // Ignore missing table so deleteRepo can run on deployments without doc_chunks
-        if (!err?.code || err.code !== '42P01') {
+        if (!(err as { code?: string })?.code || (err as { code?: string }).code !== '42P01') {
           throw err;
         }
       }
@@ -862,32 +862,32 @@ export function createRAGIndexer(): RAGIndexer {
       );
 
       return {
-        symbols: symbolRows.map((r: any) => ({
+        symbols: symbolRows.map((r) => ({
           repoId,
           path,
-          symbol: r.symbol,
-          kind: r.kind,
-          startLine: r.start_line,
-          endLine: r.end_line,
-          metadata: r.metadata || {},
+          symbol: r.symbol as string,
+          kind: r.kind as string,
+          startLine: Number(r.start_line),
+          endLine: Number(r.end_line),
+          metadata: (r.metadata as Record<string, unknown>) || {},
         })),
-        imports: importRows.map((r: any) => ({
+        imports: importRows.map((r) => ({
           repoId,
-          fromPath: r.from_path,
-          fromSymbol: r.from_symbol,
-          toPath: r.to_path,
-          toSymbol: r.to_symbol,
-          kind: r.kind,
-          metadata: r.metadata || {},
+          fromPath: r.from_path as string,
+          fromSymbol: (r.from_symbol as string | null) ?? undefined,
+          toPath: r.to_path as string,
+          toSymbol: (r.to_symbol as string | null) ?? undefined,
+          kind: r.kind as GraphEdge['kind'],
+          metadata: (r.metadata as Record<string, unknown>) || {},
         })),
-        dependents: dependentRows.map((r: any) => ({
+        dependents: dependentRows.map((r) => ({
           repoId,
-          fromPath: r.from_path,
-          fromSymbol: r.from_symbol,
-          toPath: r.to_path,
-          toSymbol: r.to_symbol,
-          kind: r.kind,
-          metadata: r.metadata || {},
+          fromPath: r.from_path as string,
+          fromSymbol: (r.from_symbol as string | null) ?? undefined,
+          toPath: r.to_path as string,
+          toSymbol: (r.to_symbol as string | null) ?? undefined,
+          kind: r.kind as GraphEdge['kind'],
+          metadata: (r.metadata as Record<string, unknown>) || {},
         })),
       };
     },
@@ -977,7 +977,7 @@ async function persistGraph(repoId: string, path: string, nodes: GraphNode[], ed
   await client.query('DELETE FROM code_graph_edges WHERE repo_id = $1 AND from_path = $2', [repoId, path]);
 
   if (nodes.length > 0) {
-    const params: any[] = [];
+    const params: unknown[] = [];
     const placeholders = nodes
       .map((n, i) => {
         const offset = i * 7;
@@ -1000,7 +1000,7 @@ async function persistGraph(repoId: string, path: string, nodes: GraphNode[], ed
   }
 
   if (edges.length > 0) {
-    const params: any[] = [];
+    const params: unknown[] = [];
     const placeholders = edges
       .map((e, i) => {
         const offset = i * 7;

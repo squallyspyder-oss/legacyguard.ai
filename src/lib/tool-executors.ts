@@ -161,12 +161,20 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
     }
   }
 
-  async function runSemgrepScan(repoPath: string) {
+  type SemgrepFinding = {
+    severity: string;
+    type: string;
+    message: string;
+    path: string;
+    start?: number;
+  };
+
+  async function runSemgrepScan(repoPath: string): Promise<{ success: boolean; findings: SemgrepFinding[]; stderr?: string }> {
     if (process.env.LEGACYGUARD_FORCE_DOCKER !== 'true') {
       // rely on docker availability; if absent, return error
       try {
         await execAsync('docker version --format "{{.Server.Version}}"', { timeout: 2000 });
-      } catch (err) {
+      } catch {
         return {
           success: false,
           findings: [],
@@ -185,20 +193,22 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
 
     try {
       const { stdout, stderr } = await execAsync(cmd, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
-      const parsed = JSON.parse(stdout || '{}');
-      const findings = Array.isArray(parsed.results) ? parsed.results.map((r: any) => ({
-        severity: r.extra?.severity || 'unknown',
-        type: r.check_id || 'unknown',
-        message: r.extra?.message || 'No message',
-        path: r.path,
-        start: r.start?.line,
-      })) : [];
+      const parsed = JSON.parse(stdout || '{}') as { results?: Array<{ extra?: { severity?: string; message?: string }; check_id?: string; path: string; start?: { line?: number } }> };
+      const findings: SemgrepFinding[] = Array.isArray(parsed.results)
+        ? parsed.results.map((r) => ({
+            severity: r.extra?.severity || 'unknown',
+            type: r.check_id || 'unknown',
+            message: r.extra?.message || 'No message',
+            path: r.path,
+            start: r.start?.line,
+          }))
+        : [];
       return { success: true, findings, stderr };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         success: false,
         findings: [],
-        stderr: err?.stderr || err?.message || 'semgrep failed',
+        stderr: (err as { stderr?: string; message?: string })?.stderr || (err as Error)?.message || 'semgrep failed',
       };
     }
   }
@@ -221,20 +231,24 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
     data?: Record<string, unknown>;
     error?: string;
   } {
-    let parsed: any;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(jsonText || '{}');
-    } catch (err: any) {
-      return { error: `Structured comparison solicitado, mas stdout não é JSON: ${err?.message || err}` };
+    } catch (err) {
+      return { error: `Structured comparison solicitado, mas stdout não é JSON: ${(err as Error)?.message || err}` };
+    }
+
+    if (parsed === null || typeof parsed !== 'object') {
+      return { error: 'Structured comparison solicitado, mas stdout não é JSON estruturado' };
     }
 
     const output: Record<string, unknown> = {};
     for (const field of fields) {
       const parts = field.split('.').filter(Boolean);
-      let cursor: any = parsed;
+      let cursor: unknown = parsed;
       for (const part of parts) {
-        if (cursor && Object.prototype.hasOwnProperty.call(cursor, part)) {
-          cursor = cursor[part];
+        if (cursor && typeof cursor === 'object' && Object.prototype.hasOwnProperty.call(cursor, part)) {
+          cursor = (cursor as Record<string, unknown>)[part];
         } else {
           cursor = undefined;
           break;
@@ -924,8 +938,8 @@ export function createToolExecutor(config: ExecutorConfig): ToolExecutor {
 
           case 'securityScan': {
             const scan = await runSemgrepScan(baseDir);
-            const criticalCount = scan.findings.filter((f: any) => (f.severity || '').toLowerCase() === 'critical').length;
-            const highCount = scan.findings.filter((f: any) => (f.severity || '').toLowerCase() === 'high').length;
+            const criticalCount = scan.findings.filter((f) => (f.severity || '').toLowerCase() === 'critical').length;
+            const highCount = scan.findings.filter((f) => (f.severity || '').toLowerCase() === 'high').length;
             const passed = scan.success && criticalCount === 0 && highCount === 0;
 
             return JSON.stringify({

@@ -89,21 +89,23 @@ CREATE TABLE IF NOT EXISTS indexed_repos (
   error_message TEXT
 );
 
--- Índices HNSW para busca vetorial (mais rápido que IVFFlat para datasets médios)
-CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding 
-  ON code_chunks 
-  USING hnsw (embedding vector_cosine_ops)
-  WITH (m = 16, ef_construction = 64);
-
-CREATE INDEX IF NOT EXISTS idx_doc_chunks_embedding 
-  ON doc_chunks 
-  USING hnsw (embedding vector_cosine_ops)
-  WITH (m = 16, ef_construction = 64);
-
-CREATE INDEX IF NOT EXISTS idx_query_cache_embedding 
-  ON query_cache 
-  USING hnsw (embedding vector_cosine_ops)
-  WITH (m = 16, ef_construction = 64);
+-- Índices vetoriais com fallback: usa HNSW se disponível (pgvector >= 0.6), senão IVFFlat
+DO $$
+DECLARE
+  has_hnsw boolean := EXISTS (SELECT 1 FROM pg_am WHERE amname = 'hnsw');
+BEGIN
+  IF has_hnsw THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding ON code_chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_doc_chunks_embedding ON doc_chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_query_cache_embedding ON query_cache USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)';
+  ELSE
+    -- Fallback compatível com versões antigas de pgvector (usa IVFFlat). Ajuste lists conforme tamanho do dataset.
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_code_chunks_embedding ON code_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_doc_chunks_embedding ON doc_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_query_cache_embedding ON query_cache USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)';
+  END IF;
+END;
+$$;
 
 -- Índices para filtros comuns
 CREATE INDEX IF NOT EXISTS idx_code_chunks_repo ON code_chunks(repo_id);

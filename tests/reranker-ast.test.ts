@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { GraphContext } from '../src/lib/reranker';
 
 // ============================================================================
 // Reranker Tests
@@ -17,9 +18,9 @@ describe('Reranker', () => {
     it('should boost results that are imported by top results', async () => {
       // Simulate: top result (fileA) imports file D
       // fileD is not in top-3 anchors, so it should receive boost
-      const graphContexts = new Map([
-        ['fileA.ts', { imports: [{ toPath: 'fileD.ts', kind: 'import' }], dependents: [] }],
-        ['fileD.ts', { imports: [], dependents: [{ fromPath: 'fileA.ts', kind: 'import' }] }],
+      const graphContexts: Map<string, GraphContext> = new Map([
+        ['fileA.ts', { imports: [{ repoId: 'r', fromPath: 'fileA.ts', toPath: 'fileD.ts', kind: 'import' }], dependents: [] }],
+        ['fileD.ts', { imports: [], dependents: [{ repoId: 'r', fromPath: 'fileA.ts', toPath: 'fileD.ts', kind: 'import' }] }],
       ]);
 
       const results = [
@@ -33,7 +34,7 @@ describe('Reranker', () => {
       // fileD should be boosted because fileA (anchor) imports it
       // fileD: 0.45 + 0.15 = 0.60 > fileC: 0.55
       const { rerank } = await import('../src/lib/reranker');
-      const reranked = await rerank('test query', results, graphContexts as any, { enabled: true, graphBoostWeight: 0.15, topK: 10, timeoutMs: 3000 });
+      const reranked = await rerank('test query', results, graphContexts, { enabled: true, graphBoostWeight: 0.15, topK: 10, timeoutMs: 3000 });
 
       // fileD should now rank higher than fileC due to graph boost
       const fileD = reranked.find(r => r.path === 'fileD.ts');
@@ -48,7 +49,7 @@ describe('Reranker', () => {
     });
 
     it('should not boost unconnected files', async () => {
-      const graphContexts = new Map([
+      const graphContexts: Map<string, GraphContext> = new Map([
         ['fileA.ts', { imports: [], dependents: [] }],
         ['fileB.ts', { imports: [], dependents: [] }],
       ]);
@@ -59,7 +60,7 @@ describe('Reranker', () => {
       ];
 
       const { rerank } = await import('../src/lib/reranker');
-      const reranked = await rerank('test', results, graphContexts as any, { enabled: true, graphBoostWeight: 0.15, topK: 10, timeoutMs: 3000 });
+      const reranked = await rerank('test', results, graphContexts, { enabled: true, graphBoostWeight: 0.15, topK: 10, timeoutMs: 3000 });
 
       // fileB should not receive boost
       const fileB = reranked.find(r => r.path === 'fileB.ts');
@@ -104,32 +105,7 @@ describe('Reranker', () => {
 
 describe('Python AST Chunking', () => {
   it('should extract functions from Python code', async () => {
-    const pythonCode = `
-import os
-from typing import List
-
-def hello_world():
-    print("Hello, World!")
-
-def calculate_sum(a: int, b: int) -> int:
-    return a + b
-
-class Calculator:
-    def __init__(self):
-        self.value = 0
-    
-    def add(self, x):
-        self.value += x
-`;
-
-    // We need to test the chunking function directly
-    // For now, test that smartChunk handles Python
-    const { detectLanguage } = await import('../src/lib/rag-indexer').then(m => ({
-      detectLanguage: (path: string) => {
-        const ext = path.split('.').pop()?.toLowerCase() || '';
-        return ext === 'py' ? 'python' : 'unknown';
-      }
-    }));
+    const { detectLanguage } = await import('../src/lib/rag-indexer');
 
     expect(detectLanguage('test.py')).toBe('python');
   });

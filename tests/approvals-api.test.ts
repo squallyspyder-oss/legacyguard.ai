@@ -43,9 +43,13 @@ describe('Approvals API', () => {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   });
   
+  type SafeRequestInit = Omit<RequestInit, 'signal'> & { signal?: AbortSignal };
+
   // Helper para criar Request mock
-  function createRequest(url: string, options: RequestInit = {}): NextRequest {
-    return new NextRequest(new URL(url, 'http://localhost:3000'), options);
+  function createRequest(url: string, options: SafeRequestInit = {}): NextRequest {
+    const { signal, ...rest } = options;
+    const safeOptions: SafeRequestInit = { ...rest, signal: signal || undefined };
+    return new NextRequest(new URL(url, 'http://localhost:3000'), safeOptions);
   }
   
   // ==========================================================================
@@ -93,8 +97,7 @@ describe('Approvals API', () => {
     
     it('cleanup=true remove expiradas antes de listar', async () => {
       // Criar aprovação com expiração curta
-      const store = approvalStore as any;
-      const approval = await approvalStore.createApproval({
+      await approvalStore.createApproval({
         intent: 'test',
         loaLevel: 2,
         reason: 'Test',

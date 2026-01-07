@@ -14,7 +14,12 @@
     "start:worker": "node dist/scripts/agentWorker.js",
     "start:indexing-worker": "node dist/scripts/indexingWorker.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:escape": "vitest run tests/sandbox-escape.test.ts",
+    "test:escape:runtime": "bash scripts/test-sandbox-escape.sh",
+    "benchmark:rag": "BENCHMARK_USE_MOCK=true tsx scripts/benchmark-rag.ts",
+    "benchmark:rag:live": "tsx scripts/benchmark-rag.ts",
+    "benchmark:rag:compare": "tsx scripts/benchmark-rag.ts --compare"
   },
   "dependencies": {
     "@neondatabase/neon-js": "0.1.0-beta.21",

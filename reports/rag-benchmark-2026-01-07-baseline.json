@@ -1,0 +1,569 @@
+{
+  "timestamp": "2026-01-07T03:09:54.953Z",
+  "version": "1.0.0",
+  "config": {
+    "withReranker": false,
+    "topK": 10,
+    "repoId": "legacyguard"
+  },
+  "summary": {
+    "totalQueries": 15,
+    "MRR3": 0.8,
+    "Hit1": 0.7333333333333333,
+    "Hit3": 0.8666666666666667,
+    "SymbolRecall3": 0.6777777777777777
+  },
+  "byCategory": {
+    "auth": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "sandbox": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "guardian": {
+      "count": 2,
+      "MRR3": 0.5,
+      "Hit3": 0.5
+    },
+    "rag": {
+      "count": 3,
+      "MRR3": 0.8333333333333334,
+      "Hit3": 1
+    },
+    "approval": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "audit": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "agents": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "security": {
+      "count": 2,
+      "MRR3": 0.25,
+      "Hit3": 0.5
+    },
+    "playbook": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "observability": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    },
+    "chat": {
+      "count": 1,
+      "MRR3": 1,
+      "Hit3": 1
+    }
+  },
+  "queryResults": [
+    {
+      "queryId": "auth-middleware",
+      "query": "middleware de autenticação com JWT",
+      "category": "auth",
+      "results": [
+        {
+          "path": "src/lib/auth.ts",
+          "score": 0.92,
+          "symbols": [
+            "authOptions",
+            "verifyToken"
+          ]
+        },
+        {
+          "path": "src/app/api/auth/[...nextauth]/route.ts",
+          "score": 0.85,
+          "symbols": [
+            "GET",
+            "POST"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 1
+      },
+      "expectedFiles": [
+        "src/lib/auth.ts",
+        "src/app/api/auth/[...nextauth]/route.ts"
+      ],
+      "expectedSymbols": [
+        "authOptions",
+        "verifyToken",
+        "getSession"
+      ]
+    },
+    {
+      "queryId": "sandbox-execution",
+      "query": "executar comando em sandbox isolado com Docker",
+      "category": "sandbox",
+      "results": [
+        {
+          "path": "src/lib/sandbox.ts",
+          "score": 0.95,
+          "symbols": [
+            "runSandbox",
+            "getSandboxCapabilities"
+          ]
+        },
+        {
+          "path": "src/lib/execution-pipeline.ts",
+          "score": 0.88,
+          "symbols": [
+            "runWithSnapshot",
+            "createSnapshot"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 1
+      },
+      "expectedFiles": [
+        "src/lib/sandbox.ts",
+        "src/lib/execution-pipeline.ts"
+      ],
+      "expectedSymbols": [
+        "runSandbox",
+        "runWithSnapshot",
+        "createSnapshot"
+      ]
+    },
+    {
+      "queryId": "guardian-flow-loa",
+      "query": "classificar intenção e nível de autonomia LOA",
+      "category": "guardian",
+      "results": [
+        {
+          "path": "src/guardian-flow/types.ts",
+          "score": 0.9,
+          "symbols": [
+            "LOALevel",
+            "IntentClassification"
+          ]
+        },
+        {
+          "path": "src/lib/intent-detector.ts",
+          "score": 0.82,
+          "symbols": [
+            "classifyIntent"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 1
+      },
+      "expectedFiles": [
+        "src/guardian-flow/types.ts",
+        "src/lib/intent-detector.ts"
+      ],
+      "expectedSymbols": [
+        "classifyIntent",
+        "LOALevel",
+        "IntentClassification"
+      ]
+    },
+    {
+      "queryId": "rag-search",
+      "query": "busca semântica com embeddings e pgvector",
+      "category": "rag",
+      "results": [
+        {
+          "path": "src/lib/rag-indexer.ts",
+          "score": 0.93,
+          "symbols": [
+            "search",
+            "createRAGIndexer",
+            "getGraphNeighbors"
+          ]
+        },
+        {
+          "path": "src/lib/reranker.ts",
+          "score": 0.87,
+          "symbols": [
+            "rerank",
+            "applyGraphBoost"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.6666666666666666
+      },
+      "expectedFiles": [
+        "src/lib/rag-indexer.ts",
+        "src/lib/indexer-pgvector.ts"
+      ],
+      "expectedSymbols": [
+        "search",
+        "embed",
+        "createRAGIndexer"
+      ]
+    },
+    {
+      "queryId": "approval-workflow",
+      "query": "sistema de aprovação humana para ações críticas",
+      "category": "approval",
+      "results": [
+        {
+          "path": "src/lib/approval-store.ts",
+          "score": 0.91,
+          "symbols": [
+            "createApproval",
+            "validateApproval"
+          ]
+        },
+        {
+          "path": "src/app/api/approvals/route.ts",
+          "score": 0.84,
+          "symbols": [
+            "GET",
+            "POST"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 1
+      },
+      "expectedFiles": [
+        "src/lib/approval-store.ts",
+        "src/app/api/approvals/route.ts"
+      ],
+      "expectedSymbols": [
+        "createApproval",
+        "validateApproval",
+        "getApproval"
+      ]
+    },
+    {
+      "queryId": "audit-logging",
+      "query": "registrar eventos de auditoria com severidade",
+      "category": "audit",
+      "results": [
+        {
+          "path": "src/lib/audit.ts",
+          "score": 0.94,
+          "symbols": [
+            "logEvent",
+            "AuditSeverity"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.6666666666666666
+      },
+      "expectedFiles": [
+        "src/lib/audit.ts"
+      ],
+      "expectedSymbols": [
+        "logEvent",
+        "AuditSeverity",
+        "AuditEvent"
+      ]
+    },
+    {
+      "queryId": "agent-orchestrator",
+      "query": "orquestrador que coordena agentes e tarefas",
+      "category": "agents",
+      "results": [
+        {
+          "path": "src/agents/orchestrator.ts",
+          "score": 0.89,
+          "symbols": [
+            "runOrchestrator",
+            "AgentTask"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.6666666666666666
+      },
+      "expectedFiles": [
+        "src/agents/orchestrator.ts"
+      ],
+      "expectedSymbols": [
+        "runOrchestrator",
+        "AgentTask",
+        "orchestrate"
+      ]
+    },
+    {
+      "queryId": "reranker-boost",
+      "query": "reranking de resultados com boost de grafo",
+      "category": "rag",
+      "results": [
+        {
+          "path": "src/lib/rag-indexer.ts",
+          "score": 0.93,
+          "symbols": [
+            "search",
+            "createRAGIndexer",
+            "getGraphNeighbors"
+          ]
+        },
+        {
+          "path": "src/lib/reranker.ts",
+          "score": 0.87,
+          "symbols": [
+            "rerank",
+            "applyGraphBoost"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 0.5,
+        "hit1": false,
+        "hit3": true,
+        "symbolRecall": 1
+      },
+      "expectedFiles": [
+        "src/lib/reranker.ts"
+      ],
+      "expectedSymbols": [
+        "rerank",
+        "applyGraphBoost",
+        "RerankedResult"
+      ]
+    },
+    {
+      "queryId": "rbac-permissions",
+      "query": "controle de acesso baseado em roles e permissões",
+      "category": "security",
+      "results": [],
+      "metrics": {
+        "reciprocalRank": 0,
+        "hit1": false,
+        "hit3": false,
+        "symbolRecall": 0
+      },
+      "expectedFiles": [
+        "src/lib/rbac.ts"
+      ],
+      "expectedSymbols": [
+        "checkPermission",
+        "hasRole",
+        "RBACPolicy"
+      ]
+    },
+    {
+      "queryId": "rate-limiting",
+      "query": "limitar requisições por usuário ou IP",
+      "category": "security",
+      "results": [
+        {
+          "path": "src/lib/rbac.ts",
+          "score": 0.88,
+          "symbols": [
+            "checkPermission",
+            "hasRole"
+          ]
+        },
+        {
+          "path": "src/lib/rate-limit.ts",
+          "score": 0.85,
+          "symbols": [
+            "rateLimit",
+            "checkRateLimit"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 0.5,
+        "hit1": false,
+        "hit3": true,
+        "symbolRecall": 1
+      },
+      "expectedFiles": [
+        "src/lib/rate-limit.ts"
+      ],
+      "expectedSymbols": [
+        "rateLimit",
+        "checkRateLimit",
+        "RateLimitConfig"
+      ]
+    },
+    {
+      "queryId": "playbook-dsl",
+      "query": "DSL para definir playbooks de automação",
+      "category": "playbook",
+      "results": [
+        {
+          "path": "src/lib/playbook-dsl.ts",
+          "score": 0.9,
+          "symbols": [
+            "parsePlaybook",
+            "executePlaybook"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.6666666666666666
+      },
+      "expectedFiles": [
+        "src/lib/playbook-dsl.ts"
+      ],
+      "expectedSymbols": [
+        "parsePlaybook",
+        "executePlaybook",
+        "PlaybookStep"
+      ]
+    },
+    {
+      "queryId": "metrics-collection",
+      "query": "coletar métricas de performance e latência",
+      "category": "observability",
+      "results": [
+        {
+          "path": "src/lib/metrics.ts",
+          "score": 0.87,
+          "symbols": [
+            "recordMetric",
+            "getMetrics"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.6666666666666666
+      },
+      "expectedFiles": [
+        "src/lib/metrics.ts"
+      ],
+      "expectedSymbols": [
+        "recordMetric",
+        "getMetrics",
+        "MetricType"
+      ]
+    },
+    {
+      "queryId": "chat-streaming",
+      "query": "streaming de respostas do chat com SSE",
+      "category": "chat",
+      "results": [
+        {
+          "path": "src/app/api/chat/route.ts",
+          "score": 0.86,
+          "symbols": [
+            "POST"
+          ]
+        },
+        {
+          "path": "src/agents/chat.ts",
+          "score": 0.83,
+          "symbols": [
+            "streamChat"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.5
+      },
+      "expectedFiles": [
+        "src/app/api/chat/route.ts",
+        "src/agents/chat.ts"
+      ],
+      "expectedSymbols": [
+        "streamChat",
+        "createChatCompletion"
+      ]
+    },
+    {
+      "queryId": "graph-neighbors",
+      "query": "buscar vizinhos no grafo de dependências",
+      "category": "rag",
+      "results": [
+        {
+          "path": "src/lib/rag-indexer.ts",
+          "score": 0.93,
+          "symbols": [
+            "search",
+            "createRAGIndexer",
+            "getGraphNeighbors"
+          ]
+        },
+        {
+          "path": "src/lib/reranker.ts",
+          "score": 0.87,
+          "symbols": [
+            "rerank",
+            "applyGraphBoost"
+          ]
+        }
+      ],
+      "metrics": {
+        "reciprocalRank": 1,
+        "hit1": true,
+        "hit3": true,
+        "symbolRecall": 0.3333333333333333
+      },
+      "expectedFiles": [
+        "src/lib/rag-indexer.ts"
+      ],
+      "expectedSymbols": [
+        "getGraphNeighbors",
+        "GraphNode",
+        "GraphEdge"
+      ]
+    },
+    {
+      "queryId": "blast-radius",
+      "query": "calcular impacto de mudanças em arquivos",
+      "category": "guardian",
+      "results": [],
+      "metrics": {
+        "reciprocalRank": 0,
+        "hit1": false,
+        "hit3": false,
+        "symbolRecall": 0
+      },
+      "expectedFiles": [
+        "src/lib/impact.ts"
+      ],
+      "expectedSymbols": [
+        "calculateBlastRadius",
+        "getAffectedFiles"
+      ]
+    }
+  ],
+  "duration": 4
+}

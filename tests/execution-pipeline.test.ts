@@ -46,7 +46,9 @@ describe('execution-pipeline snapshots', () => {
     });
 
     expect(res.success).toBe(true);
-    expect(res.result).toBe('ok');
+    if (res.success) {
+      expect(res.result).toBe('ok');
+    }
     const content = await fs.readFile(path.join(repo, 'a.txt'), 'utf-8');
     expect(content).toBe('mutated');
   });
