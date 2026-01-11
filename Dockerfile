@@ -2,7 +2,7 @@
 # Render will run: docker build .
 
 # ---------- Base ----------
-FROM node:22-bookworm-slim AS base
+FROM node:22.21.1-trixie-slim AS base
 ENV NODE_ENV=production
 ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -24,7 +24,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
 
 # ---------- Runner ----------
-FROM node:22-bookworm-slim AS runner
+FROM node:22.21.1-trixie-slim AS runner
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
