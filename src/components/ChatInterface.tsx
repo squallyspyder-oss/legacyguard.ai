@@ -7,6 +7,9 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import AgentSelector, { AGENT_ROLES } from './AgentSelector';
 import SettingsSidebar from './SettingsSidebar';
 import { GuardianFlowProvider, useGuardianFlow } from '@/guardian-flow';
+import { useActiveRepo, useConversation } from '@/lib/app-context';
+import RepoSelector from './repo/RepoSelector';
+import ImportRepoModal, { type RepoInfo } from './repo/ImportRepoModal';
 
 type SessionItem = {
   id: string;
@@ -40,6 +43,13 @@ interface TestFile {
 
 export default function ChatInterface() {
   const { data: session, status } = useSession();
+  
+  // Contexto global de repos e conversas
+  const { activeRepo, addImportedRepo } = useActiveRepo();
+  const { activeConversation, addMessage, getConversationHistory } = useConversation();
+  
+  // Modal de import de repo
+  const [showImportModal, setShowImportModal] = useState(false);
 
   const [messages, setMessages] = useState<Message[]>([
     { 
@@ -381,18 +391,56 @@ export default function ChatInterface() {
         if (deepSearch && !ragReady) {
           setMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Pesquisa profunda ligada mas índice/RAG está pendente. Reindexe em Configurações para reduzir alucinações.' }]);
         }
+        
+        // Construir contexto com repo ativo e histórico
+        const chatContext: Record<string, unknown> = {};
+        if (activeRepo) {
+          chatContext.repoPath = activeRepo.path;
+          chatContext.repoName = activeRepo.name;
+          chatContext.repoId = activeRepo.id;
+          // Incluir contexto detalhado do repositório (estrutura, arquivos principais, stats)
+          if (activeRepo.context) {
+            chatContext.repoContext = {
+              summary: activeRepo.context.summary,
+              structure: activeRepo.context.structure,
+              mainFiles: activeRepo.context.mainFiles,
+              stats: activeRepo.context.stats,
+            };
+          }
+        }
+        
+        // Incluir histórico de mensagens para contexto da LLM
+        const history = getConversationHistory(6); // Últimas 6 mensagens
+        const historyText = history
+          .filter(m => m.role !== 'system')
+          .map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 500)}`)
+          .join('\n');
+        if (historyText) {
+          chatContext.conversationHistory = historyText;
+        }
+        
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: userText, deep: deepSearch }),
+          body: JSON.stringify({ 
+            message: userText, 
+            deep: deepSearch,
+            context: chatContext,
+          }),
         });
         if (!res.ok) throw new Error('Erro no modo chat');
         const data = await res.json();
-        setMessages(prev => [...prev, {
-          role: 'assistant',
+        
+        // Adicionar mensagem do assistente
+        const assistantMsg = {
+          role: 'assistant' as const,
           content: data.reply,
           suggestOrchestrateText: data.suggestOrchestrate ? userText : undefined,
-        }]);
+        };
+        setMessages(prev => [...prev, assistantMsg]);
+        
+        // Salvar no contexto global
+        addMessage(assistantMsg);
       } catch {
         setMessages(prev => [...prev, { role: 'assistant', content: 'Erro ao processar o chat livre.' }]);
       } finally {
@@ -408,6 +456,18 @@ export default function ChatInterface() {
     formData.append('message', userText);
     formData.append('role', agentRole);
     uploadedFiles.forEach(file => formData.append('files', file));
+    
+    // Passar contexto do repositório ativo para o agente
+    if (activeRepo) {
+      formData.append('repoId', activeRepo.id);
+      if (activeRepo.path) {
+        formData.append('repoPath', activeRepo.path);
+      }
+      formData.append('repoName', activeRepo.name);
+      if (activeRepo.context) {
+        formData.append('repoContext', JSON.stringify(activeRepo.context));
+      }
+    }
 
     try {
       const res = await fetch('/api/agent', { method: 'POST', body: formData });
@@ -1093,6 +1153,29 @@ export default function ChatInterface() {
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-3">
+                {/* Seletor de Repositório */}
+                <div className="flex items-center gap-3">
+                  <RepoSelector 
+                    compact 
+                    onImportClick={() => setShowImportModal(true)}
+                    onRepoSelected={(repoId) => {
+                      // Quando um repo é selecionado, adiciona mensagem informativa
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `📂 **Repositório selecionado!** Agora estou analisando o contexto do repositório para fornecer assistência mais precisa. Você pode fazer perguntas sobre a estrutura, código ou solicitar análises específicas.`
+                      }]);
+                    }}
+                  />
+                  {activeRepo && (
+                    <span className="text-xs text-slate-400">
+                      Contexto: <span className="text-emerald-400">{activeRepo.name}</span>
+                      {activeRepo.context && (
+                        <span className="ml-2 text-emerald-500">✓ Contexto carregado</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                
                 {uploadedFiles.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {uploadedFiles.map((file, i) => (
@@ -1377,6 +1460,36 @@ export default function ChatInterface() {
           </div>
         </div>
       )}
+      
+      {/* Import Repo Modal */}
+      <ImportRepoModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImportComplete={(repoInfo: RepoInfo) => {
+          console.log('[ChatInterface] Repo importado:', repoInfo);
+          
+          // Criar objeto de repo ativo
+          const newRepo = {
+            id: repoInfo.path || `repo_${Date.now()}`,
+            name: repoInfo.name,
+            fullName: repoInfo.name,
+            path: repoInfo.path,
+            url: repoInfo.url,
+            branch: repoInfo.branch,
+            status: 'ready' as const,
+            indexedAt: new Date().toISOString(),
+          };
+          
+          // Adicionar ao contexto global
+          addImportedRepo(newRepo);
+          
+          // Mensagem de confirmação no chat
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: `✅ **Repositório importado!**\n\n📁 **${repoInfo.name}**\n${repoInfo.branch ? `🌿 Branch: \`${repoInfo.branch}\`` : ''}\n\nO contexto do repositório está ativo. Faça perguntas sobre o código!`,
+          }]);
+        }}
+      />
     </div>
   );
 }

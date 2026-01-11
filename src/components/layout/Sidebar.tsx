@@ -19,10 +19,12 @@ import {
   HelpCircle,
   MoreHorizontal,
   GitBranch,
+  FolderOpen,
 } from "lucide-react"
 import type { AppSettings, SessionItem } from "./MainLayout"
-import ImportRepoModal from "../repo/ImportRepoModal"
+import ImportRepoModal, { type RepoInfo } from "../repo/ImportRepoModal"
 import AuthModal from "../auth/AuthModal"
+import { useActiveRepo } from "@/lib/app-context"
 
 interface SidebarProps {
   isOpen: boolean
@@ -63,6 +65,9 @@ export default function Sidebar({
   const [hoveredSession, setHoveredSession] = useState<string | null>(null)
   const [showImportModal, setShowImportModal] = useState(false)
   const [showAuthModal, setShowAuthModal] = useState(false)
+  
+  // Contexto global de repos
+  const { activeRepo, importedRepos, addImportedRepo } = useActiveRepo()
 
   const filteredSessions = sessions.filter(
     (s) =>
@@ -74,6 +79,29 @@ export default function Sidebar({
     if (risk === "alto") return "text-red-400"
     if (risk === "medio") return "text-amber-400"
     return "text-emerald-400"
+  }
+  
+  // Handler para import de repo
+  const handleRepoImported = (repoInfo: RepoInfo) => {
+    console.log("[Sidebar] Repo importado:", repoInfo)
+    
+    // Criar objeto de repo ativo
+    const newRepo = {
+      id: repoInfo.path || `repo_${Date.now()}`,
+      name: repoInfo.name,
+      fullName: repoInfo.name,
+      path: repoInfo.path,
+      url: repoInfo.url,
+      branch: repoInfo.branch,
+      status: repoInfo.indexed ? 'ready' as const : 'indexing' as const,
+      indexedAt: new Date().toISOString(),
+    }
+    
+    // Adicionar ao contexto global
+    addImportedRepo(newRepo)
+    
+    // Criar nova conversa para o repo
+    onNewChat()
   }
 
   const riskBg = (risk: SessionItem["risk"]) => {
@@ -173,6 +201,19 @@ export default function Sidebar({
       {/* Quick Actions */}
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
+          {/* Active Repo Indicator */}
+          {activeRepo && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+              <FolderOpen className="w-4 h-4 text-emerald-400" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-emerald-300 truncate">{activeRepo.name}</p>
+                <p className="text-xs text-emerald-400/70">
+                  {activeRepo.status === 'indexing' ? '⏳ Indexando...' : '✓ Pronto'}
+                </p>
+              </div>
+            </div>
+          )}
+          
           {/* Import Repo Button */}
           <button
             onClick={() => setShowImportModal(true)}
@@ -182,7 +223,9 @@ export default function Sidebar({
                      transition-all duration-200 group"
           >
             <GitBranch className="w-4 h-4 group-hover:text-primary transition-colors" />
-            <span className="text-sm font-medium">Importar Repositório</span>
+            <span className="text-sm font-medium">
+              {activeRepo ? 'Trocar Repositório' : 'Importar Repositório'}
+            </span>
           </button>
           
           {/* Quick Mode Buttons */}
@@ -376,10 +419,7 @@ export default function Sidebar({
       <ImportRepoModal
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
-        onImportComplete={(repoInfo) => {
-          console.log("Repo imported:", repoInfo)
-          // TODO: Update app state with imported repo
-        }}
+        onImportComplete={handleRepoImported}
       />
 
       {/* Auth Modal */}

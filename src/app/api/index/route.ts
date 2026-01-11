@@ -6,6 +6,11 @@ import { promisify } from 'util';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { getRAGIndexer, type CodeFile } from '@/lib/rag-indexer';
+import { 
+  createIndexJobSync, 
+  updateIndexJobSync, 
+  type IndexJob 
+} from '@/lib/index-job-store';
 
 const execAsync = promisify(exec);
 
@@ -198,17 +203,19 @@ export async function POST(req: NextRequest) {
 
       const indexedFiles = collectFiles(clonePath);
 
-      // RAG indexing (pgvector)
-      let ragStats = null;
+      // RAG indexing em background (não bloqueia resposta)
       if (ragEnabled) {
-        try {
-          const ragIndexer = getRAGIndexer();
-          const codeFiles = collectFilesWithContent(clonePath);
-          const repoId = folderName;
-          ragStats = await ragIndexer.indexRepo(repoId, codeFiles);
-        } catch (ragError: any) {
-          console.warn('[index] RAG indexing failed:', ragError.message);
-        }
+        (async () => {
+          try {
+            console.log('[index] Iniciando RAG indexing em background para', folderName);
+            const ragIndexer = getRAGIndexer();
+            const codeFiles = collectFilesWithContent(clonePath);
+            const ragStats = await ragIndexer.indexRepo(folderName, codeFiles);
+            console.log('[index] RAG indexing completo:', ragStats.totalChunks, 'chunks');
+          } catch (ragError: any) {
+            console.warn('[index] RAG indexing failed:', ragError.message);
+          }
+        })();
       }
 
       return NextResponse.json({
@@ -220,15 +227,15 @@ export async function POST(req: NextRequest) {
         fileCount: indexedFiles.length,
         totalSize: indexedFiles.reduce((acc, f) => acc + f.size, 0),
         files: indexedFiles.slice(0, 30).map((f) => f.path),
-        rag: ragStats ? {
-          enabled: true,
-          chunks: ragStats.totalChunks,
-          languages: ragStats.languages,
-        } : { enabled: false },
+        rag: {
+          enabled: ragEnabled,
+          status: 'indexing',
+        },
       });
     }
 
     // GitHub clone using authenticated session (lists come from /api/github/repos)
+    // ⚡ INSTANTÂNEO: Retorna job ID imediatamente, clone/RAG em background
     if (action === 'clone-github') {
       const session = await getServerSession(authOptions);
       // @ts-expect-error - accessToken não existe no tipo Session padrão
@@ -249,47 +256,73 @@ export async function POST(req: NextRequest) {
       const folderName = generateRepoFolderName(repoName);
       const clonePath = path.join(REPOS_DIR, folderName);
 
-      const gitUrl = `https://x-access-token:${accessToken}@github.com/${owner}/${repo}.git`;
-
-      try {
-        await execAsync(`git clone --depth 1 --branch ${branch} "${gitUrl}" "${clonePath}"`, {
-          timeout: 120000,
-        });
-      } catch (cloneError: any) {
-        return NextResponse.json({
-          error: cloneError?.message || 'Erro ao clonar repositório privado',
-        }, { status: 500 });
-      }
-
-      const indexedFiles = collectFiles(clonePath);
-
-      let ragStats = null;
-      if (ragEnabled) {
-        try {
-          const ragIndexer = getRAGIndexer();
-          const codeFiles = collectFilesWithContent(clonePath);
-          const repoId = folderName;
-          ragStats = await ragIndexer.indexRepo(repoId, codeFiles);
-        } catch (ragError: any) {
-          console.warn('[index] RAG indexing failed:', ragError.message);
-        }
-      }
-
-      return NextResponse.json({
-        indexed: true,
-        action: 'clone-github',
-        path: clonePath,
+      // ⚡ Criar job e retornar INSTANTANEAMENTE
+      const job = createIndexJobSync({
         owner,
         repo,
         branch,
-        fileCount: indexedFiles.length,
-        totalSize: indexedFiles.reduce((acc, f) => acc + f.size, 0),
-        files: indexedFiles.slice(0, 30).map((f) => f.path),
-        rag: ragStats ? {
-          enabled: true,
-          chunks: ragStats.totalChunks,
-          languages: ragStats.languages,
-        } : { enabled: false },
+        clonePath,
+      });
+
+      // 🚀 Clone + RAG em background (fire-and-forget)
+      const gitUrl = `https://x-access-token:${accessToken}@github.com/${owner}/${repo}.git`;
+      
+      (async () => {
+        try {
+          updateIndexJobSync(job.id, { status: 'cloning' });
+          console.log(`[index] Job ${job.id}: Clonando ${owner}/${repo}...`);
+          
+          await execAsync(`git clone --depth 1 --branch ${branch} "${gitUrl}" "${clonePath}"`, {
+            timeout: 120000,
+          });
+          
+          const indexedFiles = collectFiles(clonePath);
+          updateIndexJobSync(job.id, { 
+            status: 'indexing',
+            fileCount: indexedFiles.length,
+          });
+          console.log(`[index] Job ${job.id}: Clone OK, ${indexedFiles.length} arquivos. Iniciando RAG...`);
+          
+          // RAG indexing
+          if (ragEnabled) {
+            try {
+              const ragIndexer = getRAGIndexer();
+              const codeFiles = collectFilesWithContent(clonePath);
+              const ragStats = await ragIndexer.indexRepo(folderName, codeFiles);
+              updateIndexJobSync(job.id, { 
+                status: 'completed',
+                ragChunks: ragStats.totalChunks,
+              });
+              console.log(`[index] Job ${job.id}: ✅ Completo! ${ragStats.totalChunks} chunks RAG`);
+            } catch (ragError: any) {
+              console.warn(`[index] Job ${job.id}: RAG falhou:`, ragError.message);
+              updateIndexJobSync(job.id, { 
+                status: 'completed',
+                ragChunks: 0,
+              });
+            }
+          } else {
+            updateIndexJobSync(job.id, { status: 'completed' });
+          }
+        } catch (error: any) {
+          console.error(`[index] Job ${job.id}: ❌ Erro:`, error.message);
+          updateIndexJobSync(job.id, { 
+            status: 'failed',
+            error: error.message || 'Erro ao clonar repositório',
+          });
+        }
+      })();
+
+      // ⚡ Resposta INSTANTÂNEA com job ID
+      return NextResponse.json({
+        queued: true,
+        jobId: job.id,
+        action: 'clone-github',
+        owner,
+        repo,
+        branch,
+        statusUrl: `/api/index/status/${job.id}`,
+        message: 'Importação iniciada! Você pode acompanhar o progresso.',
       });
     }
 

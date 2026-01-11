@@ -334,6 +334,23 @@ export default function ImportRepoModal({ isOpen, onClose, onImportComplete }: I
       }
 
       const data = await res.json()
+      
+      // ⚡ Nova resposta com job assíncrono
+      if (data.queued && data.jobId) {
+        setStatus("success")
+        onImportComplete?.({
+          type: "git",
+          name: repo.fullName,
+          url: repo.htmlUrl,
+          branch: repo.defaultBranch,
+          path: data.jobId, // Usar jobId como referência
+          indexed: true, // Será indexado em background
+        })
+        setTimeout(handleClose, 800) // Fechar mais rápido
+        return
+      }
+      
+      // Resposta legada (fallback)
       setStatus("success")
 
       onImportComplete?.({

@@ -22,7 +22,9 @@ export type Permission =
   | 'incidents:read' // Read incidents
   | 'incidents:write' // Create/ingest incidents
   | 'sessions:read' // Read sessions
-  | 'sessions:write'; // Manage sessions
+  | 'sessions:write' // Manage sessions
+  | 'logs:read' // Query external logs (read-only)
+  | 'logs:configure'; // Configure log sources (admin)
 
 // Role → Permissions mapping
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
@@ -42,6 +44,8 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'incidents:write',
     'sessions:read',
     'sessions:write',
+    'logs:read',
+    'logs:configure',
   ],
   developer: [
     'orchestrate',
@@ -55,6 +59,7 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'incidents:write',
     'sessions:read',
     'sessions:write',
+    'logs:read',
   ],
   viewer: [
     'chat',
@@ -63,6 +68,7 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'playbooks:read',
     'incidents:read',
     'sessions:read',
+    'logs:read',
   ],
   guest: ['chat'],
 };

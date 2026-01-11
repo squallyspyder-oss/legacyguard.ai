@@ -35,10 +35,16 @@ export async function POST(req: NextRequest) {
 
     const { message, deepSearch: deep, context } = validation.data;
     const repoPath = (context as any)?.repoPath as string | undefined;
-    console.log('[chat] chat request received', { userId, deep: !!deep });
+    const repoContext = (context as any)?.repoContext as {
+      summary?: string;
+      structure?: string;
+      mainFiles?: string[];
+      stats?: { totalFiles: number; languages: Record<string, number> };
+    } | undefined;
+    console.log('[chat] chat request received', { userId, deep: !!deep, hasRepoContext: !!repoContext });
 
     console.log('[chat] agent invoked');
-    const result = await runChat({ message, deep: deep || false, repoPath });
+    const result = await runChat({ message, deep: deep || false, repoPath, repoContext });
 
     // Quota enforcement after actual usage is known
     if (result.usage) {
