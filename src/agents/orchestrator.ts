@@ -263,13 +263,18 @@ export class Orchestrator {
       this.state.currentWave = waveIdx;
       this.log(`\n=== Wave ${waveIdx + 1}/${waves.length} (${wave.length} tarefas) ===`);
 
-      // Verificar se alguma tarefa desta wave requer aprovação (executor)
-      const needsApproval = wave.some((t) => t.agent === 'executor') && plan.requiresApproval;
+      // ✅ CVE-LG-002 FIX: Verificar aprovação para executor E operator (ambos executam código)
+      // ANTES: wave.some((t) => t.agent === 'executor') - VULNERÁVEL
+      // DEPOIS: inclui operator que também faz git operations
+      const needsApproval = wave.some((t) => 
+        t.agent === 'executor' || t.agent === 'operator'
+      ) && plan.requiresApproval;
 
       if (needsApproval && !this.approvalGranted) {
-        this.log('⏸️ Aguardando aprovação humana para executar tarefas de deploy/merge');
+        const blockingTask = wave.find((t) => t.agent === 'executor' || t.agent === 'operator');
+        this.log(`⏸️ Aguardando aprovação humana para executar tarefas de ${blockingTask?.agent} (deploy/git operations)`);
         this.state.status = 'awaiting-approval';
-        this.callbacks.onApprovalRequired?.(plan, wave.find((t) => t.agent === 'executor')!);
+        this.callbacks.onApprovalRequired?.(plan, blockingTask!);
         return this.state; // Pausa aqui até aprovação
       }
 

@@ -4,6 +4,8 @@
  * @route POST /api/approvals/[id]/approve
  * @route POST /api/approvals/[id]/reject
  * @route GET /api/approvals/[id]
+ * 
+ * SEGURANÇA: Endpoints protegidos por RBAC (CVE-LG-001 fix)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,6 +17,7 @@ import {
   initApprovalStore,
 } from '@/lib/approval-store';
 import { logEvent } from '@/lib/audit';
+import { requirePermission } from '@/lib/rbac';
 
 async function ensureStore() {
   if (!isStoreInitialized()) {
@@ -30,6 +33,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // ✅ CVE-LG-001 FIX: RBAC check obrigatório
+  const authResult = await requirePermission('approve');
+  if (!authResult.authorized) {
+    return authResult.response;
+  }
+
   try {
     await ensureStore();
     const { id } = await params;
@@ -76,12 +85,20 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // ✅ CVE-LG-001 FIX: RBAC check obrigatório
+  const authResult = await requirePermission('approve');
+  if (!authResult.authorized) {
+    return authResult.response;
+  }
+
   try {
     await ensureStore();
     const { id } = await params;
     
     const body = await request.json();
-    const { action, decidedBy, reason } = body;
+    // ✅ CVE-LG-003 FIX: decidedBy extraído da sessão autenticada, não do body
+    const { action, reason } = body;
+    const decidedBy = authResult.user?.email || authResult.user?.name || 'authenticated-user';
     
     // Validar campos obrigatórios
     if (!action || !['approve', 'reject'].includes(action)) {
@@ -91,12 +108,8 @@ export async function POST(
       );
     }
     
-    if (!decidedBy || typeof decidedBy !== 'string') {
-      return NextResponse.json(
-        { error: 'Campo "decidedBy" é obrigatório', code: 'MISSING_DECIDED_BY' },
-        { status: 400 }
-      );
-    }
+    // ✅ CVE-LG-003 FIX: decidedBy agora vem da sessão, não precisa validar do body
+    // O campo body.decidedBy é IGNORADO por segurança
     
     if (action === 'reject' && !reason) {
       return NextResponse.json(

@@ -518,6 +518,21 @@ export async function runSandbox(config: SandboxConfig): Promise<SandboxResult> 
   const dockerAvailable = dockerRequested && (await isDockerAvailable());
   const shellAvailable = isShellRunnerAvailable(config.runnerPath);
 
+  // Fail-closed quando Docker for obrigatório e indisponível
+  if (config.useDocker === true && !dockerAvailable) {
+    const message = 'Docker requerido para sandbox, mas indisponível';
+    log(`[Sandbox] ${message}`);
+    return {
+      success: false,
+      exitCode: 1,
+      stdout: '',
+      stderr: message,
+      durationMs: 0,
+      method: 'native',
+      error: message,
+    };
+  }
+
   let execute = async (): Promise<SandboxResult> => ({ success: false, exitCode: 1, stdout: '', stderr: 'not-run', durationMs: 0, method: 'native' });
 
   if (dockerAvailable) {
@@ -660,7 +675,7 @@ export async function runSandboxWithTwinHarness(
     timeoutMs: options?.timeoutMs || 120000, // 2 min default for harness
     failMode: 'fail', // We want to know if reproduction failed
     onLog: log,
-    useDocker: options?.useDocker,
+    useDocker: options?.useDocker ?? true,
   });
 
   // Interpret result for Twin context

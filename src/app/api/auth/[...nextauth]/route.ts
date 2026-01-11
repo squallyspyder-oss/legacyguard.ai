@@ -25,7 +25,8 @@ export const authOptions: NextAuthOptions = {
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production' || process.env.NEXTAUTH_URL?.startsWith('https://'),
+        // Secure só pode ser true com HTTPS - para HTTP em produção, deve ser false
+        secure: process.env.NEXTAUTH_URL?.startsWith('https://') ?? false,
       },
     },
   },

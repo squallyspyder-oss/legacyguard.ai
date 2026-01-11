@@ -31,9 +31,20 @@ function info(msg: string) {
 // Lock distribuído para evitar race condition em aprovações
 async function acquireApprovalLock(taskId: string): Promise<boolean> {
   const redis = getRedis();
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   if (!redis) {
-    console.warn('[worker] Redis não disponível para lock distribuído');
-    return true; // Em modo sem Redis, permitir (dev local)
+    if (isProduction) {
+      // CVE-LG-004 / P2: Em produção, NÃO permitir fallback - fail-closed
+      throw new Error(
+        '[Lock] ERRO CRÍTICO: Redis obrigatório para lock distribuído em produção. ' +
+        'Não é seguro prosseguir sem coordenação entre workers. ' +
+        'Configure REDIS_URL ou REDIS_TLS_URL.'
+      );
+    }
+    // Em desenvolvimento, permitir com warning
+    console.warn('[worker] ⚠️ Redis não disponível para lock distribuído (dev mode - NÃO USE EM PRODUÇÃO)');
+    return true;
   }
   
   const lockKey = `${APPROVAL_LOCK_PREFIX}${taskId}`;
@@ -65,8 +76,18 @@ function validateActor(actor: string | undefined, operation: string): string {
 // Persistir estado de orquestração no Redis
 async function saveOrchestrationState(taskId: string, state: OrchestrationState): Promise<void> {
   const redis = getRedis();
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   if (!redis) {
-    console.warn('[worker] Redis não disponível para persistir estado');
+    if (isProduction) {
+      // Em produção, falhar se não conseguir persistir estado
+      throw new Error(
+        '[State] ERRO: Redis obrigatório para persistir estado de orquestração em produção. ' +
+        'Estados perdidos podem causar inconsistências após reinício do worker. ' +
+        'Configure REDIS_URL ou REDIS_TLS_URL.'
+      );
+    }
+    console.warn('[worker] ⚠️ Redis não disponível para persistir estado (dev mode)');
     return;
   }
   

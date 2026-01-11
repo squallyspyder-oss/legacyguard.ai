@@ -68,9 +68,10 @@ describe('sandbox fallback behavior', () => {
     });
 
     expect(execMock).toHaveBeenCalled();
-    expect(spawnMock).toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
     expect(result.method).toBe('native');
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.stderr).toContain('Docker requerido');
   });
 
   it('passes runtime flag when configured', async () => {

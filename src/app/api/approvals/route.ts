@@ -2,6 +2,8 @@
  * Approvals List API Route - Listar aprovações pendentes
  * 
  * @route GET /api/approvals - Lista todas aprovações pendentes
+ * 
+ * SEGURANÇA: Endpoint protegido por RBAC (CVE-LG-001 fix)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,6 +13,7 @@ import {
   initApprovalStore,
   isStoreInitialized,
 } from '@/lib/approval-store';
+import { requirePermission } from '@/lib/rbac';
 
 async function ensureStore() {
   if (!isStoreInitialized()) {
@@ -23,6 +26,12 @@ async function ensureStore() {
 // =============================================================================
 
 export async function GET(request: NextRequest) {
+  // ✅ CVE-LG-001 FIX: RBAC check obrigatório
+  const authResult = await requirePermission('approve');
+  if (!authResult.authorized) {
+    return authResult.response;
+  }
+
   try {
     await ensureStore();
     

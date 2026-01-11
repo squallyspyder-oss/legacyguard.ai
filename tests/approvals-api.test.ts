@@ -5,16 +5,24 @@
  * - GET /api/approvals - listar pendentes
  * - GET /api/approvals/[id] - obter detalhes
  * - POST /api/approvals/[id] - aprovar/rejeitar
+ * - SEGURANÇA: autenticação obrigatória (CVE-LG-001)
+ * - SEGURANÇA: decidedBy da sessão (CVE-LG-003)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
 // Mock audit para não precisar de DB
 vi.mock('@/lib/audit', () => ({
   logEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock RBAC - simula usuário autenticado por padrão
+const mockRequirePermission = vi.fn();
+vi.mock('@/lib/rbac', () => ({
+  requirePermission: () => mockRequirePermission(),
 }));
 
 describe('Approvals API', () => {
@@ -25,6 +33,13 @@ describe('Approvals API', () => {
   
   beforeEach(async () => {
     vi.resetModules();
+    
+    // Por padrão, simular usuário autenticado com permissão
+    mockRequirePermission.mockResolvedValue({
+      authorized: true,
+      role: 'admin',
+      user: { email: 'admin@test.com', name: 'Admin User' },
+    });
     
     // Criar diretório temporário para testes
     tempDir = path.join(process.cwd(), '.test-approvals-api-' + Date.now());
@@ -51,6 +66,85 @@ describe('Approvals API', () => {
     const safeOptions: SafeRequestInit = { ...rest, signal: signal || undefined };
     return new NextRequest(new URL(url, 'http://localhost:3000'), safeOptions);
   }
+
+  // ==========================================================================
+  // TESTES DE SEGURANÇA - CVE-LG-001: Autenticação obrigatória
+  // ==========================================================================
+  
+  describe('SEGURANÇA: Autenticação obrigatória (CVE-LG-001)', () => {
+    it('GET /api/approvals retorna 401/403 sem sessão', async () => {
+      // Simular usuário não autenticado
+      mockRequirePermission.mockResolvedValue({
+        authorized: false,
+        response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      });
+      
+      const request = createRequest('/api/approvals');
+      const response = await listRoute.GET(request);
+      
+      expect(response.status).toBe(401);
+    });
+    
+    it('GET /api/approvals/[id] retorna 401/403 sem sessão', async () => {
+      mockRequirePermission.mockResolvedValue({
+        authorized: false,
+        response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      });
+      
+      const request = createRequest('/api/approvals/test-id');
+      const response = await detailRoute.GET(request, { 
+        params: Promise.resolve({ id: 'test-id' }) 
+      });
+      
+      expect(response.status).toBe(401);
+    });
+    
+    it('POST /api/approvals/[id] retorna 401/403 sem sessão', async () => {
+      mockRequirePermission.mockResolvedValue({
+        authorized: false,
+        response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      });
+      
+      const request = createRequest('/api/approvals/test-id', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'approve' }),
+      });
+      const response = await detailRoute.POST(request, { 
+        params: Promise.resolve({ id: 'test-id' }) 
+      });
+      
+      expect(response.status).toBe(401);
+    });
+    
+    it('POST /api/approvals/[id] usa email da sessão como decidedBy (CVE-LG-003)', async () => {
+      // Criar aprovação pendente
+      const approval = await approvalStore.createApproval({
+        intent: 'file_modify',
+        loaLevel: 3,
+        reason: 'Test',
+        requestedBy: 'agent',
+      });
+      
+      // Requisição com decidedBy falso no body (deve ser IGNORADO)
+      const request = createRequest(`/api/approvals/${approval.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ 
+          action: 'approve',
+          decidedBy: 'attacker@evil.com', // Este deve ser IGNORADO
+          reason: 'Approved',
+        }),
+      });
+      
+      const response = await detailRoute.POST(request, { 
+        params: Promise.resolve({ id: approval.id }) 
+      });
+      const data = await response.json();
+      
+      expect(response.status).toBe(200);
+      // decidedBy deve vir da sessão mockada (admin@test.com), não do body
+      expect(data.approval.decidedBy).toBe('admin@test.com');
+    });
+  });
   
   // ==========================================================================
   // GET /api/approvals - Listar pendentes
@@ -170,7 +264,7 @@ describe('Approvals API', () => {
       
       const request = createRequest(`/api/approvals/${approval.id}`, {
         method: 'POST',
-        body: JSON.stringify({ action: 'invalid', decidedBy: 'admin' }),
+        body: JSON.stringify({ action: 'invalid' }),
       });
       
       const response = await detailRoute.POST(request, { 
@@ -182,7 +276,7 @@ describe('Approvals API', () => {
       expect(data.code).toBe('INVALID_ACTION');
     });
     
-    it('requer decidedBy', async () => {
+    it('requer action válida (decidedBy vem da sessão)', async () => {
       const approval = await approvalStore.createApproval({
         intent: 'test',
         loaLevel: 2,
@@ -190,9 +284,10 @@ describe('Approvals API', () => {
         requestedBy: 'agent',
       });
       
+      // Enviar sem action - deve falhar
       const request = createRequest(`/api/approvals/${approval.id}`, {
         method: 'POST',
-        body: JSON.stringify({ action: 'approve' }),
+        body: JSON.stringify({}),
       });
       
       const response = await detailRoute.POST(request, { 
@@ -201,7 +296,7 @@ describe('Approvals API', () => {
       const data = await response.json();
       
       expect(response.status).toBe(400);
-      expect(data.code).toBe('MISSING_DECIDED_BY');
+      expect(data.code).toBe('INVALID_ACTION');
     });
     
     it('rejeição requer reason', async () => {
@@ -214,7 +309,7 @@ describe('Approvals API', () => {
       
       const request = createRequest(`/api/approvals/${approval.id}`, {
         method: 'POST',
-        body: JSON.stringify({ action: 'reject', decidedBy: 'admin' }),
+        body: JSON.stringify({ action: 'reject' }),
       });
       
       const response = await detailRoute.POST(request, { 
@@ -234,11 +329,11 @@ describe('Approvals API', () => {
         requestedBy: 'agent-1',
       });
       
+      // decidedBy no body é IGNORADO - vem da sessão
       const request = createRequest(`/api/approvals/${approval.id}`, {
         method: 'POST',
         body: JSON.stringify({ 
           action: 'approve', 
-          decidedBy: 'admin@test.com',
           reason: 'Aprovado após revisão',
         }),
       });
@@ -251,6 +346,7 @@ describe('Approvals API', () => {
       expect(response.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.approval.status).toBe('approved');
+      // decidedBy vem da sessão mockada, não do body
       expect(data.approval.decidedBy).toBe('admin@test.com');
     });
     
@@ -262,11 +358,11 @@ describe('Approvals API', () => {
         requestedBy: 'agent-1',
       });
       
+      // decidedBy no body é IGNORADO - vem da sessão
       const request = createRequest(`/api/approvals/${approval.id}`, {
         method: 'POST',
         body: JSON.stringify({ 
           action: 'reject', 
-          decidedBy: 'security@test.com',
           reason: 'Comando muito perigoso',
         }),
       });
@@ -279,7 +375,8 @@ describe('Approvals API', () => {
       expect(response.status).toBe(200);
       expect(data.success).toBe(true);
       expect(data.approval.status).toBe('denied');
-      expect(data.approval.decidedBy).toBe('security@test.com');
+      // decidedBy vem da sessão mockada
+      expect(data.approval.decidedBy).toBe('admin@test.com');
     });
     
     it('retorna 409 se já foi decidida', async () => {
@@ -293,12 +390,11 @@ describe('Approvals API', () => {
       // Aprovar primeiro
       await approvalStore.approveRequest(approval.id, 'first-admin');
       
-      // Tentar aprovar novamente
+      // Tentar aprovar novamente (decidedBy no body é ignorado)
       const request = createRequest(`/api/approvals/${approval.id}`, {
         method: 'POST',
         body: JSON.stringify({ 
           action: 'approve', 
-          decidedBy: 'second-admin',
         }),
       });
       
@@ -317,7 +413,6 @@ describe('Approvals API', () => {
         method: 'POST',
         body: JSON.stringify({ 
           action: 'approve', 
-          decidedBy: 'admin',
         }),
       });
       
