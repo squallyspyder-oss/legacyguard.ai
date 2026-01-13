@@ -4,7 +4,11 @@ import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import type { Session } from "next-auth"
 import type { AppSettings } from "../layout/MainLayout"
-import { Menu, Settings, Shield, Zap, Search, Terminal, GitBranch, Eye, Lightbulb } from "lucide-react"
+import { Menu, Settings, Shield, Zap, Search, Terminal, GitBranch, Eye, Lightbulb, Database, FolderOpen } from "lucide-react"
+import RepoSelector from "../repo/RepoSelector"
+import ImportRepoModal, { type RepoInfo } from "../repo/ImportRepoModal"
+import { useActiveRepo, useConversation } from "@/lib/app-context"
+import { LogsConfigPanel } from "../logs"
 
 /**
  * AssistContainer - Container Principal do LegacyAssist
@@ -89,7 +93,12 @@ export default function AssistContainer({
     activeTasks: [],
   })
   const [showThinking, setShowThinking] = useState(true)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [showLogsConfig, setShowLogsConfig] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  
+  // Contexto global de repos
+  const { activeRepo, addImportedRepo } = useActiveRepo()
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -262,11 +271,36 @@ export default function AssistContainer({
               Guardião Autônomo
             </span>
           </div>
+          
+          {/* Repo Selector no Header */}
+          <div className="ml-4 hidden md:block">
+            <RepoSelector 
+              compact 
+              onImportClick={() => setShowImportModal(true)}
+              onRepoSelected={(repoId) => {
+                // Quando repo é selecionado, adiciona mensagem informativa
+                if (messages.length === 0) {
+                  setMessages([{
+                    id: `msg-${Date.now()}`,
+                    role: 'assistant',
+                    content: `📂 **Repositório carregado!** Estou pronto para analisar o código e ajudar com o que precisar.`,
+                    timestamp: new Date(),
+                  }])
+                }
+              }}
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
           {/* Session state indicators */}
           <div className="hidden md:flex items-center gap-1.5">
+            {activeRepo && (
+              <span className="badge badge-outline text-xs text-emerald-400 border-emerald-500/30">
+                <FolderOpen className="w-3 h-3 mr-1" />
+                {activeRepo.name}
+              </span>
+            )}
             {sessionState.analyzedFiles.length > 0 && (
               <span className="badge badge-outline text-xs">
                 {sessionState.analyzedFiles.length} arquivos
@@ -293,6 +327,16 @@ export default function AssistContainer({
             )}
           </div>
           <button
+            onClick={() => setShowLogsConfig(!showLogsConfig)}
+            className={`p-2 rounded-lg transition-colors ${
+              showLogsConfig ? "bg-cyan-500/20 text-cyan-400" : "hover:bg-secondary"
+            }`}
+            aria-label="Configurar fontes de logs"
+            title="Fontes de Logs"
+          >
+            <Database className="w-4 h-4" />
+          </button>
+          <button
             onClick={() => setShowThinking(!showThinking)}
             className={`p-2 rounded-lg transition-colors ${
               showThinking ? "bg-primary/20 text-primary" : "hover:bg-secondary"
@@ -315,7 +359,7 @@ export default function AssistContainer({
       {/* Main content */}
       {messages.length === 0 ? (
         /* Welcome Screen */
-        <div className="flex-1 flex flex-col items-center justify-center p-6">
+        <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto">
           <div className="max-w-2xl w-full space-y-8">
             <div className="text-center space-y-3">
               <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center mx-auto">
@@ -327,6 +371,30 @@ export default function AssistContainer({
                 <br />
                 <span className="text-sm">Não sou um assistente passivo — sou seu parceiro de execução.</span>
               </p>
+            </div>
+            
+            {/* Seletor de Repositório na Tela Inicial */}
+            <div className="p-4 rounded-xl border border-border bg-secondary/20 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <FolderOpen className="w-4 h-4 text-primary" />
+                <span>Selecione um Repositório</span>
+              </div>
+              <RepoSelector 
+                onImportClick={() => setShowImportModal(true)}
+                onRepoSelected={(repoId) => {
+                  setMessages([{
+                    id: `msg-${Date.now()}`,
+                    role: 'assistant',
+                    content: `📂 **Repositório carregado!** Agora estou pronto para analisar o código e ajudar com qualquer tarefa. O que gostaria de fazer?`,
+                    timestamp: new Date(),
+                  }])
+                }}
+              />
+              {activeRepo && (
+                <p className="text-xs text-emerald-400 flex items-center gap-1">
+                  ✓ Contexto do repositório <strong>{activeRepo.name}</strong> está carregado
+                </p>
+              )}
             </div>
 
             {/* Quick Actions */}
@@ -530,6 +598,40 @@ export default function AssistContainer({
             </div>
           </div>
         </>
+      )}
+      
+      {/* Modal de Importar Repositório */}
+      {showImportModal && (
+        <ImportRepoModal
+          isOpen={showImportModal}
+          onClose={() => setShowImportModal(false)}
+          onImportComplete={(repo: RepoInfo) => {
+            addImportedRepo({
+              id: repo.path || `repo_${Date.now()}`,
+              name: repo.name,
+              fullName: repo.name,
+              url: repo.url,
+              branch: repo.branch || 'main',
+              status: repo.indexed ? 'ready' : 'indexing',
+            })
+            setShowImportModal(false)
+            setMessages([{
+              id: `msg-${Date.now()}`,
+              role: 'assistant',
+              content: `📂 **Repositório ${repo.name} importado!** Estou indexando o código. Em breve o contexto estará disponível para análise.`,
+              timestamp: new Date(),
+            }])
+          }}
+        />
+      )}
+      
+      {/* Painel de Configuração de Logs */}
+      {showLogsConfig && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+            <LogsConfigPanel onClose={() => setShowLogsConfig(false)} />
+          </div>
+        </div>
       )}
     </div>
   )

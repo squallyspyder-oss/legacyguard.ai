@@ -189,13 +189,17 @@ describe('orchestrator sandbox/safe mode', () => {
     expect(failed).toBe(true);
   });
 
-  it('permite bypass com LEGACYGUARD_ALLOW_NATIVE_EXEC=true quando sandbox desabilitado', async () => {
+  it('permite bypass com LEGACYGUARD_ALLOW_NATIVE_EXEC=true quando sandbox desabilitado (apenas em dev)', async () => {
     const originalEnv = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+    const originalNodeEnv = process.env.NODE_ENV;
+    
+    // P0-3: Bypass só funciona em desenvolvimento, não em produção
+    process.env.NODE_ENV = 'development';
     process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = 'true';
 
     const orch = new Orchestrator();
     (orch as any).state = { plan: { riskLevel: 'low' }, logs: [] };
-    // Sandbox DESABILITADO mas com bypass permitido
+    // Sandbox DESABILITADO mas com bypass permitido (apenas dev)
     orch.setContext({
       repoPath: process.cwd(),
       sandbox: { enabled: false },
@@ -215,8 +219,48 @@ describe('orchestrator sandbox/safe mode', () => {
     }
 
     process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = originalEnv;
+    process.env.NODE_ENV = originalNodeEnv;
 
-    // Com bypass ativo e sandbox desabilitado, não deve falhar
+    // Com bypass ativo e sandbox desabilitado em DEV, não deve falhar
     expect(failed).toBe(false);
+  });
+
+  it('bloqueia LEGACYGUARD_ALLOW_NATIVE_EXEC em produção (P0-3)', async () => {
+    const originalEnv = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC;
+    const originalNodeEnv = process.env.NODE_ENV;
+    
+    // P0-3: Bypass DEVE ser bloqueado em produção
+    process.env.NODE_ENV = 'production';
+    process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = 'true';
+
+    const orch = new Orchestrator();
+    (orch as any).state = { plan: { riskLevel: 'low' }, logs: [] };
+    orch.setContext({
+      repoPath: process.cwd(),
+      sandbox: { enabled: false },
+    });
+
+    let failed = false;
+    let errorMessage = '';
+    try {
+      await orch['runSandboxIfEnabled']({ 
+        id: 't-p03', 
+        agent: 'executor', 
+        description: 'test', 
+        dependencies: [], 
+        priority: 'low' 
+      } as any);
+    } catch (e: any) {
+      failed = true;
+      errorMessage = e.message;
+    }
+
+    process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC = originalEnv;
+    process.env.NODE_ENV = originalNodeEnv;
+
+    // Em produção, ALLOW_NATIVE_EXEC deve ser bloqueado
+    expect(failed).toBe(true);
+    expect(errorMessage).toContain('ALLOW_NATIVE_EXEC');
+    expect(errorMessage).toContain('NOT ALLOWED in production');
   });
 });

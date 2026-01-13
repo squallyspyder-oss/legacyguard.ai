@@ -20,6 +20,9 @@ import {
   MoreHorizontal,
   GitBranch,
   FolderOpen,
+  Database,
+  Check,
+  Loader2,
 } from "lucide-react"
 import type { AppSettings, SessionItem } from "./MainLayout"
 import ImportRepoModal, { type RepoInfo } from "../repo/ImportRepoModal"
@@ -67,7 +70,7 @@ export default function Sidebar({
   const [showAuthModal, setShowAuthModal] = useState(false)
   
   // Contexto global de repos
-  const { activeRepo, importedRepos, addImportedRepo } = useActiveRepo()
+  const { activeRepo, importedRepos, addImportedRepo, setActiveRepo } = useActiveRepo()
 
   const filteredSessions = sessions.filter(
     (s) =>
@@ -227,6 +230,45 @@ export default function Sidebar({
               {activeRepo ? 'Trocar Repositório' : 'Importar Repositório'}
             </span>
           </button>
+
+          {/* Imported Repos List */}
+          {importedRepos.length > 0 && (
+            <div className="mt-2 space-y-1">
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <Database className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Repositórios Indexados ({importedRepos.length})
+                </span>
+              </div>
+              <div className="max-h-32 overflow-y-auto space-y-1 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+                {importedRepos.map((repo) => (
+                  <button
+                    key={repo.id}
+                    onClick={() => setActiveRepo(repo)}
+                    className={`
+                      w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left
+                      transition-all duration-200 group
+                      ${activeRepo?.id === repo.id 
+                        ? 'bg-primary/10 border border-primary/30 text-primary' 
+                        : 'hover:bg-sidebar-accent/50 border border-transparent hover:border-sidebar-border'}
+                    `}
+                  >
+                    {repo.status === 'indexing' ? (
+                      <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin shrink-0" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{repo.name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {repo.status === 'indexing' ? 'Indexando...' : `${repo.context?.stats?.files || 0} arquivos`}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           
           {/* Quick Mode Buttons */}
           <div className="grid grid-cols-3 gap-1.5">

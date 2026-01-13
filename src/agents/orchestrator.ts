@@ -553,29 +553,53 @@ export class Orchestrator {
     
     // Verificar se bypass explícito está configurado
     const allowNativeExec = process.env.LEGACYGUARD_ALLOW_NATIVE_EXEC === 'true';
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // P0-3: BLOQUEAR ALLOW_NATIVE_EXEC em produção - fail-closed
+    if (allowNativeExec && isProduction) {
+      const errorMsg = '[ORCHESTRATOR] FATAL: LEGACYGUARD_ALLOW_NATIVE_EXEC=true is NOT ALLOWED in production. ' +
+        'This flag bypasses critical security controls and cannot be used in production environments.';
+      this.log(`❌ ${errorMsg}`);
+      
+      await logEvent({
+        action: 'security.violation',
+        severity: 'error',
+        message: 'ALLOW_NATIVE_EXEC blocked in production',
+        metadata: {
+          taskId: task.id,
+          agent: task.agent,
+          riskLevel,
+          reason: 'P0-3 security enforcement',
+        },
+      });
+      
+      throw new Error(errorMsg);
+    }
 
     if (!sandbox?.enabled && requiresSandbox) {
       if (allowNativeExec) {
-        this.log(`⚠️ AVISO: Sandbox desabilitado para ${task.agent} mas LEGACYGUARD_ALLOW_NATIVE_EXEC=true`);
-        this.log('⚠️ Execução prosseguirá SEM ISOLAMENTO - NÃO USE EM PRODUÇÃO');
+        // Apenas permitido em desenvolvimento
+        this.log(`⚠️ AVISO: Sandbox desabilitado para ${task.agent} mas LEGACYGUARD_ALLOW_NATIVE_EXEC=true (dev mode)`);
+        this.log('⚠️ Execução prosseguirá SEM ISOLAMENTO - APENAS DESENVOLVIMENTO');
         
         // AUDITAR o bypass de sandbox - isso é crítico para rastreabilidade
         await logEvent({
           action: 'sandbox.bypassed',
           severity: 'warn',
-          message: `Sandbox bypassado para task ${task.id} (${task.agent})`,
+          message: `Sandbox bypassado para task ${task.id} (${task.agent}) - DEV MODE ONLY`,
           metadata: {
             taskId: task.id,
             agent: task.agent,
             riskLevel,
-            reason: 'LEGACYGUARD_ALLOW_NATIVE_EXEC=true',
+            reason: 'LEGACYGUARD_ALLOW_NATIVE_EXEC=true (dev only)',
             orchestrationId: this.state?.id,
+            environment: process.env.NODE_ENV,
           },
         });
         
         return null;
       }
-      throw new Error(`Sandbox obrigatório para agente ${task.agent} (${riskLevel} risk). Configure sandbox ou defina LEGACYGUARD_ALLOW_NATIVE_EXEC=true para bypass.`);
+      throw new Error(`Sandbox obrigatório para agente ${task.agent} (${riskLevel} risk). Configure sandbox ou defina LEGACYGUARD_ALLOW_NATIVE_EXEC=true para bypass (apenas em desenvolvimento).`);
     }
 
     if (!sandbox?.enabled) return null;

@@ -6,6 +6,12 @@ vi.mock('@/lib/audit', () => ({ __esModule: true, logEvent: vi.fn().mockResolved
 const runSandboxMock = vi.fn();
 vi.mock('@/lib/sandbox', () => ({ __esModule: true, runSandbox: runSandboxMock }));
 
+// P0-4: Mock RBAC para permitir testes da API
+vi.mock('@/lib/rbac', () => ({
+  __esModule: true,
+  requirePermission: vi.fn().mockResolvedValue({ authorized: true, user: { email: 'test@test.com', role: 'admin' } }),
+}));
+
 describe('Guardian Flow API - LOA 1 execução real', () => {
   beforeEach(() => {
     vi.resetModules();

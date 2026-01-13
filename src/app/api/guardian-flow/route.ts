@@ -3,6 +3,8 @@
  * 
  * API para executar fluxos Guardian
  * @route /api/guardian-flow
+ * 
+ * P0-4: RBAC obrigatório - endpoint protegido por autenticação
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -22,6 +24,7 @@ import {
 import { TIMEOUTS } from '@/guardian-flow/constants';
 import { runSandbox } from '@/lib/sandbox';
 import { logEvent } from '@/lib/audit';
+import { requirePermission } from '@/lib/rbac';
 
 // =============================================================================
 // HELPERS
@@ -69,6 +72,23 @@ function validateRequest(body: unknown): body is GuardianFlowRequest {
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+  // ✅ P0-4: RBAC check obrigatório - endpoint de execução requer permissão 'execute'
+  const authResult = await requirePermission('execute');
+  if (!authResult.authorized) {
+    // Audit log da tentativa não autorizada
+    await logEvent({
+      action: 'guardian_flow_unauthorized',
+      severity: 'warn',
+      message: 'Unauthorized access attempt to Guardian Flow API',
+      metadata: {
+        reason: 'RBAC check failed',
+        permission: 'execute',
+      },
+    }).catch(console.error);
+    
+    return authResult.response;
+  }
+  
   const startTime = Date.now();
   const flowId = `flow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   

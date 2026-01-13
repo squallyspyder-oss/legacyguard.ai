@@ -41,6 +41,11 @@ import { POST as GuardianFlowPost } from '@/app/api/guardian-flow/route';
 
 vi.mock('@/lib/audit', () => ({ __esModule: true, logEvent: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/lib/sandbox', () => ({ __esModule: true, runSandbox: vi.fn() }));
+// P0-4: Mock RBAC para permitir testes da API
+vi.mock('@/lib/rbac', () => ({
+  __esModule: true,
+  requirePermission: vi.fn().mockResolvedValue({ authorized: true, user: { email: 'test@test.com', role: 'admin' } }),
+}));
 
 // =============================================================================
 // INTENT CLASSIFIER TESTS

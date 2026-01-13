@@ -3,6 +3,39 @@
 
 import { promisify } from 'util';
 import { runWithSnapshot } from './execution-pipeline';
+
+// =============================================================================
+// P0-1: VALIDAÇÃO DE SEGURANÇA - FORCE_DOCKER OBRIGATÓRIO EM PRODUÇÃO
+// =============================================================================
+// CRÍTICO: Em produção, LEGACYGUARD_FORCE_DOCKER DEVE ser 'true'
+// Isso garante que execução nativa (sem isolamento) nunca ocorra em produção
+function validateForceDockerInProduction(): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const forceDocker = process.env.LEGACYGUARD_FORCE_DOCKER;
+  
+  if (isProduction && forceDocker !== 'true') {
+    const errorMsg = 
+      '[SANDBOX] FATAL: LEGACYGUARD_FORCE_DOCKER must be "true" in production. ' +
+      'Native execution without Docker isolation is NOT ALLOWED for security reasons. ' +
+      `Current value: "${forceDocker}"`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+}
+
+// Executar validação no carregamento do módulo (fail-fast)
+// Apenas em runtime, não durante build
+if (typeof process !== 'undefined' && process.env) {
+  try {
+    validateForceDockerInProduction();
+  } catch (e) {
+    // Em ambiente de build/bundling, ignorar
+    if (process.env.NODE_ENV === 'production') {
+      throw e;
+    }
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let spawn: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -419,9 +452,50 @@ async function runShellSandbox(config: SandboxConfig): Promise<SandboxResult> {
 }
 
 // Run sandbox natively (fallback - less secure)
+// P0-2: BLOQUEADO EM PRODUÇÃO - Execução nativa sem isolamento não é permitida
 async function runNativeSandbox(config: SandboxConfig): Promise<SandboxResult> {
   const startTime = Date.now();
   const log = config.onLog || console.log;
+  
+  // P0-2: BLOQUEAR em produção - fail-closed
+  if (process.env.NODE_ENV === 'production') {
+    const errorMessage = 
+      '[SANDBOX] BLOCKED: Native execution without Docker isolation is NOT ALLOWED in production. ' +
+      'Docker must be available and functioning. ' +
+      'This is a security enforcement to prevent arbitrary code execution on the host.';
+    
+    log(`[Sandbox/Native] ❌ ${errorMessage}`);
+    
+    // Auditar a tentativa bloqueada
+    try {
+      const { logEvent } = await import('./audit');
+      await logEvent({
+        action: 'sandbox.native_blocked',
+        severity: 'error',
+        message: 'Native sandbox execution blocked in production',
+        metadata: { 
+          repoPath: config.repoPath,
+          command: config.command,
+          reason: 'P0-2 security enforcement'
+        },
+      });
+    } catch {
+      // Ignorar erro de audit para não mascarar o erro principal
+    }
+    
+    return {
+      success: false,
+      exitCode: 1,
+      stdout: '',
+      stderr: errorMessage,
+      durationMs: Date.now() - startTime,
+      method: 'native',
+      error: errorMessage,
+    };
+  }
+  
+  // Em desenvolvimento, permitir com warning severo
+  log(`[Sandbox/Native] ⚠️ WARNING: Running without Docker isolation. This is ONLY acceptable in local development.`);
 
   const command = config.command || (await findTestCommand(config.repoPath, config.languageHint)) || 'echo "No test command"';
 
