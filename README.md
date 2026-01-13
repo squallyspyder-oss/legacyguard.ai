@@ -66,11 +66,34 @@ GITHUB_SECRET=...
 
 ---
 
+## Deploy
+
+**Produção**: AWS ECS Fargate (São Paulo - sa-east-1)
+
+```bash
+# Provisionar infraestrutura
+cd infra/aws
+terraform init
+terraform apply -var-file="prod.tfvars"
+
+# Deploy automático via GitHub Actions em cada push para main
+```
+
+Ver [docs/DEPLOY_AWS.md](docs/DEPLOY_AWS.md) para guia completo.
+
+### Serviços Externos (já configurados)
+- **PostgreSQL**: Neon (pgvector para RAG)
+- **Redis**: Upstash (filas e estado)
+- **LLM**: OpenAI API
+
+---
+
 ## Documentação
 
+- [docs/DEPLOY_AWS.md](docs/DEPLOY_AWS.md) — guia de deploy AWS
 - [docs/AUDIT.md](docs/AUDIT.md) — auditoria de realidade e vulnerabilidades
 - [docs/GUIA_LEGACYGUARD.md](docs/GUIA_LEGACYGUARD.md) — guia para devs
-- [TUTORIAL.md](TUTORIAL.md) — tutorial de deploy
+- [docs/PRODUCTION_READINESS_REMEDIATION.md](docs/PRODUCTION_READINESS_REMEDIATION.md) — remediações de segurança
 
 ---
 
