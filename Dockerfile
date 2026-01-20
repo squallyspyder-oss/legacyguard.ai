@@ -9,7 +9,7 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 # Minimal base hardening: ensure CA certs and clean apt cache
 RUN apt-get update \
-&& apt-get install -y --no-install-recommends ca-certificates \
+&& apt-get install -y --no-install-recommends ca-certificates curl \
 && rm -rf /var/lib/apt/lists/*
 
 # ---------- Deps ----------
